@@ -161,7 +161,14 @@ KeyPair Crypto::generate_ec_keypair() {
     return kp;
 }
 
-std::string Crypto::sign(const std::string& private_key_pem, const std::string& message) {
+Address Crypto::derive_address_bytes(const std::string& public_key_pem) {
+    Hash256 h = sha256_digest(reinterpret_cast<const uint8_t*>(public_key_pem.data()), public_key_pem.size());
+    Address addr{};
+    std::copy_n(h.begin(), 20, addr.begin());
+    return addr;
+}
+
+std::vector<uint8_t> Crypto::sign_bytes(const std::string& private_key_pem, const uint8_t* data, size_t len) {
     BIO* bio = BIO_new_mem_buf(private_key_pem.data(), static_cast<int>(private_key_pem.size()));
     EVP_PKEY* pkey = PEM_read_bio_PrivateKey(bio, nullptr, nullptr, nullptr);
     BIO_free(bio);
@@ -175,7 +182,7 @@ std::string Crypto::sign(const std::string& private_key_pem, const std::string& 
         throw std::runtime_error("EVP_DigestSignInit failed");
     }
 
-    if (1 != EVP_DigestSignUpdate(ctx, message.data(), message.size())) {
+    if (1 != EVP_DigestSignUpdate(ctx, data, len)) {
         EVP_MD_CTX_free(ctx);
         EVP_PKEY_free(pkey);
         throw std::runtime_error("EVP_DigestSignUpdate failed");
@@ -194,27 +201,20 @@ std::string Crypto::sign(const std::string& private_key_pem, const std::string& 
         EVP_PKEY_free(pkey);
         throw std::runtime_error("EVP_DigestSignFinal failed");
     }
+    sig.resize(sig_len);
 
     EVP_MD_CTX_free(ctx);
     EVP_PKEY_free(pkey);
 
-    return to_hex(sig.data(), sig_len);
+    return sig;
 }
 
-bool Crypto::verify(const std::string& public_key_pem, const std::string& message, const std::string& signature_hex) {
+bool Crypto::verify_bytes(const std::string& public_key_pem, const uint8_t* data, size_t len, const std::vector<uint8_t>& signature) {
     BIO* bio = BIO_new_mem_buf(public_key_pem.data(), static_cast<int>(public_key_pem.size()));
     EVP_PKEY* pkey = PEM_read_bio_PUBKEY(bio, nullptr, nullptr, nullptr);
     BIO_free(bio);
 
     if (!pkey) return false;
-
-    std::vector<uint8_t> sig;
-    try {
-        sig = from_hex(signature_hex);
-    } catch (...) {
-        EVP_PKEY_free(pkey);
-        return false;
-    }
 
     EVP_MD_CTX* ctx = EVP_MD_CTX_new();
     if (1 != EVP_DigestVerifyInit(ctx, nullptr, EVP_sha256(), nullptr, pkey)) {
@@ -223,17 +223,31 @@ bool Crypto::verify(const std::string& public_key_pem, const std::string& messag
         return false;
     }
 
-    if (1 != EVP_DigestVerifyUpdate(ctx, message.data(), message.size())) {
+    if (1 != EVP_DigestVerifyUpdate(ctx, data, len)) {
         EVP_MD_CTX_free(ctx);
         EVP_PKEY_free(pkey);
         return false;
     }
 
-    int rc = EVP_DigestVerifyFinal(ctx, sig.data(), sig.size());
+    int rc = EVP_DigestVerifyFinal(ctx, signature.data(), signature.size());
     EVP_MD_CTX_free(ctx);
     EVP_PKEY_free(pkey);
 
     return (rc == 1);
+}
+
+std::string Crypto::sign(const std::string& private_key_pem, const std::string& message) {
+    auto sig = sign_bytes(private_key_pem, reinterpret_cast<const uint8_t*>(message.data()), message.size());
+    return to_hex(sig.data(), sig.size());
+}
+
+bool Crypto::verify(const std::string& public_key_pem, const std::string& message, const std::string& signature_hex) {
+    try {
+        auto sig = from_hex(signature_hex);
+        return verify_bytes(public_key_pem, reinterpret_cast<const uint8_t*>(message.data()), message.size(), sig);
+    } catch (...) {
+        return false;
+    }
 }
 
 std::vector<uint8_t> Crypto::generate_random_bytes(size_t len) {

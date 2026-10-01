@@ -1,0 +1,243 @@
+================================================================================
+SANJEEV (संजीव) DECENTRALIZED HEALTH LEDGER
+COMPREHENSIVE ARCHITECTURAL & OPERATIONAL SPECIFICATION
+================================================================================
+
+1. EXECUTIVE SUMMARY & DESIGN PHILOSOPHY
+--------------------------------------------------------------------------------
+Sanjeev (संजीव) is an institutional, privacy-first healthcare blockchain engineered
+specifically for electronic health records (EHR), medical provenance tracing,
+and cryptographically enforced consent management.
+
+Traditional public blockchains (such as Bitcoin or Ethereum) are fundamentally
+ill-suited for medical data management for four critical reasons:
+  1. Privacy & Compliance: Public blockchains broadcast state publicly,
+     violating healthcare privacy laws (e.g., DISHA in India, HIPAA in the US,
+     and GDPR in Europe).
+  2. Latency & Gas Costs: Pay-per-transaction gas economics and probabilistic
+     mining delays create unacceptable bottlenecks for emergency medical care.
+  3. Storage Bloat: Storing megabytes of medical scans directly on a distributed
+     virtual machine ledger causes massive state bloat.
+  4. Accountability: Healthcare networks require legally identifiable, licensed
+     institutions to validate patient medical events rather than anonymous
+     pseudonymous miners or economic staking cartels.
+
+Sanjeev resolves these challenges through a dual-layer cryptographic design:
+  - Zero-Knowledge Storage: The ledger stores only opaque, AES-256-GCM encrypted
+    blobs. The blockchain node cannot decrypt or inspect clinical records.
+  - Institutional Proof-of-Authority (PoA): Blocks are validated and sealed
+    strictly by verified, legally accredited healthcare regulators and hospital
+    consortiums with zero gas fees and sub-second deterministic finality.
+  - Temporal Cryptographic Access Control: Access permissions are granted as
+    cryptographic tokens with strict start and end timestamps, full sub-delegation
+    hierarchies, and mandatory on-chain decryption audit trails.
+
+
+2. CONSENSUS MECHANISM: PROOF-OF-AUTHORITY (PoA)
+--------------------------------------------------------------------------------
+Sanjeev implements an institutional Proof-of-Authority (PoA) consensus engine
+designed to provide deterministic finality, high transaction throughput, and
+legal accountability.
+
+2.1. Why Proof-of-Authority for Healthcare?
+  - Energy Efficient: Zero wasteful cryptographic hash puzzles (unlike Proof-of-Work).
+  - Sybil-Resistant by Law: Validators are accredited medical regulatory bodies
+    (e.g., Ministry of Health, National Health Authority, AIIMS, Apollo Hospitals).
+  - Zero Reorganizations: Blocks sealed by authorized signers achieve immediate
+    finality. Forking or block reorganizations are prevented by construction.
+  - Zero Gas Fees: Transactions do not require volatile cryptocurrency tokens.
+    Network operation is sustained as a public health infrastructure utility.
+
+2.2. Block Sealing & Verification Workflow
+  Every block in Sanjeev contains an institutional header signed using ECDSA
+  (secp256k1 or NIST P-256):
+    1. Mempool Aggregation: Transactions are verified against state rules
+       (signature validity, token window, sender nonce) and pooled.
+    2. Merkle Root Computation: Canonical binary transaction IDs are arranged
+       into a binary Merkle tree to produce a 32-byte cryptographic root.
+    3. Header Construction:
+       - Index: Monotonically increasing block height (0 = Genesis).
+       - PrevHash: SHA-256 digest of previous block header.
+       - MerkleRoot: Root hash of transactions in current block.
+       - Timestamp: Unix epoch millisecond timestamp.
+       - AuthorityAddress: 20-byte derived address of sealing validator.
+       - AuthorityName: Human-readable legal institutional entity name.
+    4. Cryptographic Signing: The validator signs the header digest using its
+       private EC key.
+    5. Peer Verification: Receiving nodes verify that:
+       a) AuthorityAddress is registered in the institutional validator set.
+       b) Signature verifies against the authority's registered public key.
+       c) PrevHash matches the latest known canonical block.
+       d) MerkleRoot matches the computed transaction list.
+       e) Timestamp is monotonic and within acceptable clock drift (< 120s).
+
+
+3. NETWORK TOPOLOGY & ACTIVE NODE SPECIFICATION
+--------------------------------------------------------------------------------
+The Sanjeev network architecture comprises four tiered node roles:
+
+3.1. Node Roles & Responsibilities
+  - Tier 1: Authority Validator Nodes
+    * Entities: Ministry of Health, National Health Authority, Premier Hospitals.
+    * Role: Maintain complete ledger history, validate mempool transactions,
+      seal and cryptographically sign new blocks, execute consensus.
+  - Tier 2: Healthcare Gateway Nodes
+    * Entities: Hospitals, Diagnostic Laboratories, Insurance Providers.
+    * Role: Submit encrypted blobs, process patient temporal grants, issue
+      physician sub-delegations, verify audit receipts.
+  - Tier 3: Auditor / Observer Nodes
+    * Entities: Regulatory oversight bodies, Medical grievance ombudsmen,
+      clinical trial compliance auditors.
+    * Role: Maintain read-only synchronized copies of the ledger and run the
+      `sanjeev_trace` real-time monitoring tool in continuous follow mode.
+  - Tier 4: Edge Clients
+    * Entities: Patient Mobile Apps, Doctor Web Portals, Telemedicine Kiosks.
+    * Role: Local document encryption/decryption, ECDSA keypair management,
+      interaction via HTTPS REST API.
+
+3.2. Current Active Deployment Topology
+  In the current operational deployment:
+  - Active Authority Validator Nodes: 1 Primary Institutional Validator
+    * Name: "Government Ministry of Health - Authority Validator #1"
+    * Address: 0x1bdfad43f15c2baf9781bddb703dd93dc47ed5f2
+    * Protocol: HTTP/REST over native TCP (port 8080), SQLite3 WAL storage.
+  - Active Real-Time Tracer Sessions: 1 Continuous Follow-Mode Daemon (`task-431`)
+    * Monitoring SQLite database `sanjeev_live.db` with unbuffered I/O streaming.
+  - Peer Expansion Capability:
+    The consensus engine maintains an dynamic authority registry supporting
+    multi-validator round-robin and threshold multi-signature governance
+    (e.g., 3-of-5 or 7-of-10 institutional approvals).
+
+
+4. CRYPTOGRAPHIC PRIMITIVES & ZERO-KNOWLEDGE RECORD MODEL
+--------------------------------------------------------------------------------
+Sanjeev enforces end-to-end zero-knowledge security. Plaintext medical data
+never touches the network wire, API endpoints, or database tables.
+
+4.1. Cryptographic Algorithms
+  - Symmetric Encryption: AES-256-GCM (Authenticated Galois/Counter Mode).
+    * Provides both confidentiality and ciphertext integrity verification.
+    * 256-bit random document symmetric keys.
+    * 96-bit (12-byte) unique random Initialization Vectors (IV).
+    * 128-bit (16-byte) GMAC Authentication Tags.
+  - Asymmetric Identity & Signatures: OpenSSL ECDSA (secp256k1 / P-256).
+    * Raw DER-encoded signatures with trailing length truncation.
+    * 20-byte derived wallet addresses (SHA-256 digest truncated to 20 bytes).
+  - Hashing & Integrity: SHA-256 (NIST FIPS 180-4).
+    * Canonical binary serialization ensures byte-for-byte deterministic hashing.
+
+4.2. End-to-End Medical Document Lifecycle
+  1. Patient / Clinic Encrypts Document Client-Side:
+     - Input: Raw medical record (PDF, DICOM scan, or uncompressed ZIP bundle).
+     - Key Generation: Client generates a random 256-bit symmetric key K_doc.
+     - Encryption: Ciphertext = AES-256-GCM(K_doc, Plaintext, IV).
+  2. Blob Commitment to Blockchain (`BLOB_STORE`):
+     - The client computes BlobID = SHA-256(Plaintext).
+     - The client sends ONLY:
+       * `blob_id`: 32-byte hash
+       * `data_b64`: Base64 AES ciphertext
+       * `iv_hex`: 12-byte IV
+       * `tag_hex`: 16-byte Auth Tag
+       * `owner_address`: 20-byte Patient address
+     - Plaintext and K_doc remain strictly on the client device.
+  3. Key Wrapping for Recipient (`TOKEN_GRANT`):
+     - To share the record with a hospital or doctor, the patient wraps K_doc
+       under the recipient's public key:
+       EncryptedKey = Encrypt_Asymmetric(PubKey_Doctor, K_doc).
+     - The patient issues a Temporal Access Token specifying:
+       * `valid_from`: Start timestamp (Unix epoch).
+       * `valid_until`: Expiration timestamp (Unix epoch).
+       * `encrypted_symkey`: The wrapped key bytes.
+  4. Access & Immutable Decryption Auditing (`TOKEN_AUDIT_DECRYPT`):
+     - When the doctor requests decryption:
+       a) Node verifies current_time is within [valid_from, valid_until].
+       b) Node verifies token status is ACTIVE (not revoked or expired).
+       c) Node commits a `DECRYPTION_AUDIT` transaction to the blockchain.
+       d) Node returns the wrapped EncryptedKey to the doctor.
+       e) Doctor's device decrypts EncryptedKey using their private EC key,
+          then decrypts the AES-256-GCM blob locally.
+
+
+5. THE 6 TRANSACTION TYPES & STATE MACHINE
+--------------------------------------------------------------------------------
+All state changes on the Sanjeev ledger are driven by 6 atomic transaction types:
+
+  1. `BLOB_STORE` (Type 1):
+     Registers a new root encrypted medical record. Establishes the initial owner
+     and sets `previous_blob_id = 0x00...00` (Genesis Version).
+
+  2. `BLOB_UPDATE` (Type 2):
+     Appends a revised clinical version (e.g. follow-up consultation, lab result).
+     Preserves immutable provenance by linking `new_blob_id` to `previous_blob_id`.
+     Only authorized parties (patient owner or active token holder) can update.
+
+  3. `TOKEN_GRANT` (Type 3):
+     Issues a root access capability from a patient directly to a healthcare
+     facility or doctor with bounded temporal validity.
+
+  4. `TOKEN_DELEGATE` (Type 4):
+     Enables an accredited hospital to sub-delegate an active access grant to an
+     attending specialist. Enforces hierarchical invariants:
+     - Child token expiration CANNOT exceed parent token expiration.
+     - Revocation of a parent token automatically invalidates child tokens.
+
+  5. `TOKEN_REVOKE` (Type 5):
+     Allows the patient/grantor to terminate access immediately before the
+     scheduled expiration timestamp. Changes status code to 2 (REVOKED).
+
+  6. `DECRYPTION_AUDIT` (Type 6):
+     Immutable receipt recording every key release event. Captures:
+     - Accessor Address (who decrypted the record)
+     - Blob ID (which document was decrypted)
+     - Token ID (which authorization token was used)
+     - Access Timestamp (exact millisecond of access)
+
+
+6. STORAGE & INDEXING SUBSYSTEM
+--------------------------------------------------------------------------------
+Sanjeev uses an embedded, high-performance SQLite3 storage engine configured
+for zero-overhead operation:
+
+  - Write-Ahead Logging (WAL):
+    `PRAGMA journal_mode=WAL;` and `PRAGMA synchronous=NORMAL;`
+    Allows concurrent readers (e.g., API queries, trace tool CLI) to execute
+    simultaneously with write operations (e.g., block mining) with zero locks.
+  - Normalized Schema Tables:
+    * `blocks`: Raw binary block data, header metadata, hash index.
+    * `transactions`: Canonical transaction ID index, type, sender, raw bytes.
+    * `blobs`: Encrypted blob records, owner index, version history linkage.
+    * `temporal_tokens`: Token window, status, recipient and grantor indices.
+    * `decryption_audits`: Append-only audit receipt ledger.
+
+
+7. DEVELOPER & OPERATOR QUICK REFERENCE
+--------------------------------------------------------------------------------
+7.1. Running the Blockchain Node Daemon
+  ```bash
+  ./blockchain/build/sanjeev_node --port 8080 --db sanjeev_node.db --name "Ministry of Health Validator #1"
+  ```
+
+7.2. Real-Time Transaction & Lineage Tracer
+  - Follow Mode (Live Stream):
+    ```bash
+    ./blockchain/build/sanjeev_trace --chain --db sanjeev_node.db --follow
+    ```
+  - Document Provenance & Access Audit Trace:
+    ```bash
+    ./blockchain/build/sanjeev_trace --blob <blob_id_hex> --db sanjeev_node.db
+    ```
+  - Token Status Inspection:
+    ```bash
+    ./blockchain/build/sanjeev_trace --token <token_id_hex> --db sanjeev_node.db
+    ```
+
+7.3. Running Automated Test Suites
+  ```bash
+  ctest --test-dir blockchain/build --output-on-failure
+  ```
+  Passes all 6 comprehensive test suites covering crypto tampering, signature
+  forgery, temporal boundary limits, early revocation, and PoA block validation.
+
+================================================================================
+END OF SPECIFICATION - SANJEEV LEDGER ARCHITECTURE
+================================================================================

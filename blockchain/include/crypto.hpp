@@ -42,8 +42,11 @@ public:
     static std::string derive_address(const std::string& public_key_pem);
 
     // Digital Signatures (ECDSA secp256k1 / prime256v1)
+    static std::vector<uint8_t> sign_bytes(const std::string& private_key_pem, const uint8_t* data, size_t len);
+    static bool verify_bytes(const std::string& public_key_pem, const uint8_t* data, size_t len, const std::vector<uint8_t>& signature);
     static std::string sign(const std::string& private_key_pem, const std::string& message);
     static bool verify(const std::string& public_key_pem, const std::string& message, const std::string& signature_hex);
+    static Address derive_address_bytes(const std::string& public_key_pem);
 
     // Symmetric Encryption (AES-256-GCM for medical records)
     static std::vector<uint8_t> generate_random_bytes(size_t len);

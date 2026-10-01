@@ -8,6 +8,7 @@ import { appState, DEMO_ACCOUNTS } from '../services/state.js';
 import { api } from '../services/api.js';
 import { ClientCrypto } from '../services/crypto.js';
 import { OpenRouterService, POPULAR_MODELS } from '../services/openrouter.js';
+import { SupabaseService } from '../services/supabase.js';
 
 export class PatientView {
   constructor(container) {
@@ -119,6 +120,26 @@ export class PatientView {
                 </div>
                 <span class="tag tag-success">ENCRYPTED (AES-GCM)</span>
               </div>
+
+              ${payload.doctor ? `
+                <div style="font-size: 0.8rem; color: var(--text-dim); margin-top: 0.4rem;">
+                  👨‍⚕️ <strong>Doctor:</strong> ${payload.doctor}
+                </div>
+              ` : ''}
+
+              ${(payload.symptoms && payload.symptoms.length > 0) ? `
+                <div style="display: flex; gap: 0.35rem; flex-wrap: wrap; margin-top: 0.4rem;">
+                  <span style="font-size: 0.72rem; color: var(--text-dim); align-self: center;">Symptoms:</span>
+                  ${payload.symptoms.map(s => `<span style="font-size: 0.7rem; background: rgba(245, 158, 11, 0.15); color: var(--warning); border: 1px solid rgba(245, 158, 11, 0.3); padding: 1px 6px; border-radius: 4px;">${s}</span>`).join('')}
+                </div>
+              ` : ''}
+
+              ${(payload.medications && payload.medications.length > 0) ? `
+                <div style="display: flex; gap: 0.35rem; flex-wrap: wrap; margin-top: 0.35rem;">
+                  <span style="font-size: 0.72rem; color: var(--text-dim); align-self: center;">Meds:</span>
+                  ${payload.medications.map(m => `<span style="font-size: 0.7rem; background: rgba(16, 185, 129, 0.15); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.3); padding: 1px 6px; border-radius: 4px;">${m}</span>`).join('')}
+                </div>
+              ` : ''}
 
               <div class="record-ciphertext" title="Encrypted on-chain payload">
                 Ciphertext: ${payload.ciphertext ? payload.ciphertext.substring(0, 48) + '...' : 'SECURE_BLOB'}
@@ -499,23 +520,39 @@ export class PatientView {
                 <input type="text" class="form-input" id="rec-hospital" value="Apollo City Hospital">
               </div>
               <div class="form-group">
+                <label class="form-label">Attending Doctor</label>
+                <input type="text" class="form-input" id="rec-doctor" value="Dr. Rajesh Sharma, MD" placeholder="Doctor Name or Address">
+              </div>
+            </div>
+
+            <div class="grid-2">
+              <div class="form-group">
                 <label class="form-label">Medical Department</label>
                 <input type="text" class="form-input" id="rec-dept" value="Endocrinology">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Symptoms (comma separated)</label>
+                <input type="text" class="form-input" id="rec-symptoms" placeholder="e.g. Arrhythmia, Fatigue, Shortness of breath">
               </div>
             </div>
 
             <div class="form-group">
+              <label class="form-label">Prescribed Medications (comma separated)</label>
+              <input type="text" class="form-input" id="rec-medications" placeholder="e.g. Atorvastatin 10mg, Metoprolol 25mg">
+            </div>
+
+            <div class="form-group">
               <label class="form-label">Clinical Notes, Lab Values & Prescriptions (Encrypted Client-Side)</label>
-              <textarea class="form-textarea" id="rec-body" required rows="6" placeholder="PATIENT: Alice Sharma..."></textarea>
+              <textarea class="form-textarea" id="rec-body" required rows="5" placeholder="PATIENT: Alice Sharma..."></textarea>
             </div>
 
             <div style="background: rgba(14, 165, 233, 0.1); border: 1px solid var(--primary); padding: 0.75rem; border-radius: var(--radius-sm); font-size: 0.8rem; margin-bottom: 1rem;">
-              🔒 A unique 256-bit AES-GCM symmetric key will be generated locally. Only ciphertexts will touch the blockchain ledger.
+              🔒 Encrypted with 256-bit AES-GCM locally. Synchronized with Supabase and blockchain ledger.
             </div>
 
             <div style="display: flex; justify-content: flex-end; gap: 0.75rem;">
               <button type="button" class="btn btn-secondary" id="btn-cancel-modal">Cancel</button>
-              <button type="submit" class="btn btn-primary" id="btn-submit-record">Encrypt & Store on Blockchain</button>
+              <button type="submit" class="btn btn-primary" id="btn-submit-record">Encrypt & Store</button>
             </div>
           </form>
         </div>
@@ -530,8 +567,14 @@ export class PatientView {
       e.preventDefault();
       const title = root.querySelector('#rec-title').value.trim();
       const hospital = root.querySelector('#rec-hospital').value.trim();
+      const doctor = root.querySelector('#rec-doctor').value.trim();
       const dept = root.querySelector('#rec-dept').value.trim();
+      const rawSymptoms = root.querySelector('#rec-symptoms').value.trim();
+      const rawMeds = root.querySelector('#rec-medications').value.trim();
       const body = root.querySelector('#rec-body').value.trim();
+
+      const symptomsList = rawSymptoms ? rawSymptoms.split(',').map(s => s.trim()).filter(Boolean) : [];
+      const medsList = rawMeds ? rawMeds.split(',').map(m => m.trim()).filter(Boolean) : [];
 
       const docKey = await ClientCrypto.generateKey();
       const docKeyHex = await ClientCrypto.exportKeyHex(docKey);
@@ -540,6 +583,9 @@ export class PatientView {
       const payload = {
         title,
         patient_name: appState.currentUser.name,
+        doctor,
+        symptoms: symptomsList,
+        medications: medsList,
         department: dept,
         hospital_issuer: hospital,
         ciphertext: encData.ciphertext_b64,
@@ -548,6 +594,18 @@ export class PatientView {
         algorithm: 'AES-256-GCM',
         document_sym_key_hex: docKeyHex
       };
+
+      // Save to Supabase
+      await SupabaseService.upsertPatient({
+        userId: appState.currentUser.id || appState.currentUser.email || null,
+        patientAddress: appState.currentUser.address,
+        username: appState.currentUser.name,
+        doctor: doctor,
+        symptoms: symptomsList,
+        medications: medsList,
+        patientData: { title, department: dept, hospital, timestamp: Date.now() },
+        walletSignature: appState.currentUser.signature || ''
+      });
 
       await api.submitRecord(payload, appState.currentUser.address);
       closeModal();

@@ -2,68 +2,74 @@
 
 #include "block.hpp"
 #include "consensus.hpp"
+#include "storage.hpp"
 #include <vector>
 #include <mutex>
 #include <memory>
-#include <map>
+#include <optional>
 
 namespace Sanjeev {
 
-struct LineageNode {
-    std::string tx_id;
-    std::string type;
-    std::string sender;
-    std::string recipient;
-    std::string record_hash;
-    uint64_t valid_from = 0;
-    uint64_t valid_until = 0;
-    bool is_active = false;
-    std::string parent_tx_id;
-    std::vector<std::string> child_delegations;
+struct LineageBlobNode {
+    EncryptedBlob blob;
+    std::vector<TemporalAccessToken> tokens;
+    std::vector<DecryptionAuditPayload> audits;
+};
+
+struct LineageTree {
+    Hash256 head_blob_id{};
+    std::vector<LineageBlobNode> versions;
 };
 
 class Blockchain {
 public:
     Blockchain();
+    ~Blockchain() = default;
+
+    // Database & state initialization
+    bool init(const std::string& db_path = "sanjeev.db");
 
     // Authority setup & Genesis
-    void register_authority(const std::string& address, const std::string& name, const std::string& public_key_pem);
+    void register_authority(const Address& address, const std::string& name, const std::string& public_key_pem);
     Block create_genesis_block(const std::string& authority_privkey, const std::string& authority_pubkey, const std::string& authority_name);
 
     // Transaction & Block lifecycle
     bool add_transaction(const Transaction& tx);
     Block mine_block(const std::string& authority_privkey, const std::string& authority_pubkey, const std::string& authority_name);
 
-    // Chain validation
-    bool is_chain_valid() const;
-    size_t get_chain_length() const;
-    const std::vector<Block>& get_blocks() const;
-    const std::vector<Transaction>& get_mempool() const;
+    // Status queries
+    uint64_t get_chain_height() const;
+    std::optional<Block> get_block_by_index(uint64_t index) const;
+    std::optional<Block> get_block_by_hash(const Hash256& hash) const;
+    std::optional<Block> get_latest_block() const;
+    std::vector<Transaction> get_mempool() const;
 
-    // Queries
-    std::vector<Transaction> get_all_records() const;
-    std::vector<Transaction> get_records_for_patient(const std::string& patient_address) const;
-    std::vector<Transaction> get_active_temporal_keys(uint64_t current_time = 0) const;
-    std::vector<Transaction> get_temporal_keys_for_holder(const std::string& holder_address) const;
-    
-    // Temporal key authorization check
-    bool is_access_authorized(const std::string& record_hash, const std::string& accessor_address, uint64_t current_time = 0) const;
+    // Record & Token queries
+    std::optional<EncryptedBlob> get_blob(const Hash256& blob_id) const;
+    std::vector<EncryptedBlob> get_blobs_by_owner(const Address& owner) const;
+    std::vector<EncryptedBlob> get_blob_version_history(const Hash256& head_blob_id) const;
+    std::optional<TemporalAccessToken> get_token(const Hash256& token_id) const;
+    std::vector<TemporalAccessToken> get_active_tokens_for_recipient(const Address& recipient, uint64_t current_time) const;
 
-    // Traceability & Lineage
-    LineageNode trace_lineage(const std::string& key_or_record_id) const;
-    std::string get_birds_eye_view_json(uint64_t current_time = 0) const;
+    // Decryption Access Verification & On-Chain Audit Logging
+    bool request_decryption(const Hash256& token_id, const Address& accessor_address, uint64_t current_time, std::vector<uint8_t>& out_encrypted_symkey);
 
+    // Audit logs
+    std::vector<DecryptionAuditPayload> get_audits_for_blob(const Hash256& blob_id) const;
+    std::vector<DecryptionAuditPayload> get_audits_for_accessor(const Address& accessor) const;
+
+    // Lineage Tree
+    LineageTree get_lineage_for_blob(const Hash256& head_blob_id) const;
+
+    // PoA Consensus access
     const PoAConsensus& get_consensus() const { return consensus_; }
+    Storage& get_storage() { return storage_; }
 
 private:
-    std::vector<Block> chain_;
-    std::vector<Transaction> mempool_;
+    Storage storage_;
     PoAConsensus consensus_;
+    std::vector<Transaction> mempool_;
     mutable std::mutex chain_mutex_;
-
-    // Fast lookup caches
-    std::map<std::string, Transaction> tx_index_;
-    std::map<std::string, bool> revoked_keys_;
 };
 
 } // namespace Sanjeev

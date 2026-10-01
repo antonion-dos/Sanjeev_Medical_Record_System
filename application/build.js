@@ -124,12 +124,18 @@ function test() {
     'src/services/crypto.js',
     'src/services/state.js',
     'src/services/openrouter.js',
+    'src/services/native-keypair.js',
+    'src/services/supabase.js',
+    'src/config/node-config.js',
     'src/services/auth.js',
     'src/components/AuthModal.js',
     'src/styles/auth.css',
     'src/views/patient.js',
     'src/views/hospital.js',
-    'src/views/explorer.js'
+    'src/views/explorer.js',
+    'src/views/settings-modal.js',
+    'src/views/auth-modal.js',
+    'supabase_schema.sql'
   ];
 
   let passed = true;

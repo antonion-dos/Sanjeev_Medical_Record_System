@@ -2,10 +2,6 @@
 #include "crypto.hpp"
 #include "json_utils.hpp"
 
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <unistd.h>
-#include <fcntl.h>
 #include <iostream>
 #include <sstream>
 #include <cstring>
@@ -30,112 +26,122 @@ void HttpServer::set_authority_credentials(const std::string& privkey, const std
 void HttpServer::start() {
     if (running_) return;
 
+#ifdef _WIN32
+    WSADATA wsa;
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+        throw std::runtime_error("WSAStartup failed");
+    }
+#endif
+
     server_fd_ = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_fd_ < 0) {
-        throw std::runtime_error("Failed to create socket: " + std::string(strerror(errno)));
+    if (IS_INVALID_SOCKET(server_fd_)) {
+        throw std::runtime_error("Failed to create server socket");
     }
 
     int opt = 1;
+#ifdef _WIN32
+    setsockopt(server_fd_, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&opt), sizeof(opt));
+#else
     setsockopt(server_fd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+#endif
 
     sockaddr_in address{};
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(port_);
+    address.sin_port = htons(static_cast<uint16_t>(port_));
 
-    if (bind(server_fd_, (struct sockaddr*)&address, sizeof(address)) < 0) {
-        close(server_fd_);
-        throw std::runtime_error("Failed to bind socket to port " + std::to_string(port_) + ": " + std::string(strerror(errno)));
+    if (bind(server_fd_, reinterpret_cast<struct sockaddr*>(&address), sizeof(address)) < 0) {
+        closesocket(server_fd_);
+        server_fd_ = INVALID_SOCKET;
+        throw std::runtime_error("Failed to bind socket to port " + std::to_string(port_));
     }
 
-    if (listen(server_fd_, 64) < 0) {
-        close(server_fd_);
-        throw std::runtime_error("Failed to listen on socket: " + std::string(strerror(errno)));
+    if (listen(server_fd_, 128) < 0) {
+        closesocket(server_fd_);
+        server_fd_ = INVALID_SOCKET;
+        throw std::runtime_error("Failed to listen on socket");
     }
 
     running_ = true;
     server_thread_ = std::thread(&HttpServer::run, this);
-    std::cout << "[Sanjeev Blockchain Server] Listening on http://0.0.0.0:" << port_ << std::endl;
+    std::cout << "[Sanjeev Server] Listening on http://localhost:" << port_ << std::endl;
 }
 
 void HttpServer::stop() {
     if (!running_) return;
     running_ = false;
 
-    if (server_fd_ >= 0) {
-        shutdown(server_fd_, SHUT_RDWR);
-        close(server_fd_);
-        server_fd_ = -1;
+    if (!IS_INVALID_SOCKET(server_fd_)) {
+        closesocket(server_fd_);
+        server_fd_ = INVALID_SOCKET;
     }
 
     if (server_thread_.joinable()) {
         server_thread_.join();
     }
+
+#ifdef _WIN32
+    WSACleanup();
+#endif
+    std::cout << "[Sanjeev Server] Server stopped." << std::endl;
 }
 
 void HttpServer::run() {
     while (running_) {
         sockaddr_in client_addr{};
-        socklen_t client_len = sizeof(client_addr);
-        int client_fd = accept(server_fd_, (struct sockaddr*)&client_addr, &client_len);
-
-        if (client_fd < 0) {
+#ifdef _WIN32
+        int addr_len = sizeof(client_addr);
+#else
+        socklen_t addr_len = sizeof(client_addr);
+#endif
+        socket_t client_fd = accept(server_fd_, reinterpret_cast<struct sockaddr*>(&client_addr), &addr_len);
+        if (IS_INVALID_SOCKET(client_fd)) {
             if (!running_) break;
             continue;
         }
 
-        std::thread([this, client_fd]() {
-            handle_client(client_fd);
-        }).detach();
+        std::thread(&HttpServer::handle_client, this, client_fd).detach();
     }
 }
 
-void HttpServer::handle_client(int client_fd) {
+void HttpServer::handle_client(socket_t client_fd) {
     std::string raw_request;
     char buffer[4096];
-    ssize_t bytes_read = 0;
 
-    // Read initial header block
-    while ((bytes_read = recv(client_fd, buffer, sizeof(buffer) - 1, 0)) > 0) {
-        buffer[bytes_read] = '\0';
+    while (true) {
+        int bytes_read = recv(client_fd, buffer, sizeof(buffer), 0);
+        if (bytes_read <= 0) break;
         raw_request.append(buffer, bytes_read);
-        if (raw_request.find("\r\n\r\n") != std::string::npos) {
+
+        // Check if headers end
+        size_t header_end = raw_request.find("\r\n\r\n");
+        if (header_end != std::string::npos) {
+            // Check Content-Length for body
+            size_t cl_pos = raw_request.find("Content-Length: ");
+            if (cl_pos != std::string::npos && cl_pos < header_end) {
+                size_t val_end = raw_request.find("\r\n", cl_pos);
+                int content_len = std::stoi(raw_request.substr(cl_pos + 16, val_end - (cl_pos + 16)));
+                if (raw_request.size() < header_end + 4 + content_len) {
+                    continue; // Wait for full body
+                }
+            }
             break;
         }
     }
 
-    if (raw_request.empty()) {
-        close(client_fd);
-        return;
+    if (!raw_request.empty()) {
+        HttpRequest req = parse_request(raw_request);
+        HttpResponse resp = route_request(req);
+        std::string raw_resp = build_response_string(resp);
+        send(client_fd, raw_resp.data(), static_cast<int>(raw_resp.size()), 0);
     }
 
-    HttpRequest req = parse_request(raw_request);
-
-    // Read remaining body if Content-Length specified
-    auto cl_it = req.headers.find("content-length");
-    if (cl_it != req.headers.end()) {
-        size_t expected_length = std::stoul(cl_it->second);
-        size_t header_end = raw_request.find("\r\n\r\n") + 4;
-        size_t current_body_len = raw_request.size() - header_end;
-        req.body = raw_request.substr(header_end);
-
-        while (req.body.size() < expected_length) {
-            bytes_read = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
-            if (bytes_read <= 0) break;
-            req.body.append(buffer, bytes_read);
-        }
-    }
-
-    HttpResponse resp = route_request(req);
-    std::string response_data = build_response_string(resp);
-
-    send(client_fd, response_data.data(), response_data.size(), 0);
-    close(client_fd);
+    closesocket(client_fd);
 }
 
-HttpRequest HttpServer::parse_request(const std::string& raw_request) {
+HttpRequest HttpServer::parse_request(const std::string& raw) {
     HttpRequest req;
-    std::istringstream stream(raw_request);
+    std::istringstream stream(raw);
     std::string line;
 
     if (std::getline(stream, line)) {
@@ -145,360 +151,325 @@ HttpRequest HttpServer::parse_request(const std::string& raw_request) {
         std::string full_path;
         line_stream >> full_path;
 
-        size_t qmark = full_path.find('?');
-        if (qmark != std::string::npos) {
-            req.path = full_path.substr(0, qmark);
-            req.query = full_path.substr(qmark + 1);
+        size_t q_pos = full_path.find('?');
+        if (q_pos != std::string::npos) {
+            req.path = full_path.substr(0, q_pos);
+            req.query = full_path.substr(q_pos + 1);
         } else {
             req.path = full_path;
         }
     }
 
     while (std::getline(stream, line) && line != "\r" && !line.empty()) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.back() == '\r') line.pop_back();
         size_t colon = line.find(':');
         if (colon != std::string::npos) {
             std::string key = line.substr(0, colon);
             std::string val = line.substr(colon + 1);
             while (!val.empty() && val.front() == ' ') val.erase(0, 1);
-            // Lowercase key
-            for (auto& c : key) c = tolower(c);
             req.headers[key] = val;
         }
+    }
+
+    size_t body_pos = raw.find("\r\n\r\n");
+    if (body_pos != std::string::npos) {
+        req.body = raw.substr(body_pos + 4);
     }
 
     return req;
 }
 
 std::string HttpServer::build_response_string(const HttpResponse& resp) {
-    std::ostringstream ss;
-    ss << "HTTP/1.1 " << resp.status_code << " " << resp.status_text << "\r\n";
-    ss << "Content-Type: " << resp.content_type << "\r\n";
-    ss << "Content-Length: " << resp.body.size() << "\r\n";
-    ss << "Access-Control-Allow-Origin: *\r\n";
-    ss << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n";
-    ss << "Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With\r\n";
-    ss << "Connection: close\r\n";
+    std::ostringstream oss;
+    oss << "HTTP/1.1 " << resp.status_code << " " << resp.status_text << "\r\n";
+    oss << "Content-Type: " << resp.content_type << "\r\n";
+    oss << "Content-Length: " << resp.body.size() << "\r\n";
+    oss << "Connection: close\r\n";
 
     for (const auto& h : resp.extra_headers) {
-        ss << h.first << ": " << h.second << "\r\n";
+        oss << h.first << ": " << h.second << "\r\n";
     }
 
-    ss << "\r\n";
-    ss << resp.body;
-    return ss.str();
+    oss << "\r\n";
+    oss << resp.body;
+    return oss.str();
 }
 
 HttpResponse HttpServer::route_request(const HttpRequest& req) {
     HttpResponse resp;
+    resp.extra_headers["Access-Control-Allow-Origin"] = "*";
+    resp.extra_headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS";
+    resp.extra_headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization";
 
-    // Handle CORS preflight
     if (req.method == "OPTIONS") {
         resp.status_code = 204;
         resp.status_text = "No Content";
         return resp;
     }
 
-    // 1. GET /api/status
-    if (req.method == "GET" && req.path == "/api/status") {
-        JsonValue val = JsonValue::object();
-        val["name"] = "Sanjeev Blockchain Node";
-        val["version"] = "1.0.0";
-        val["chain_height"] = static_cast<int64_t>(blockchain_.get_chain_length());
-        val["mempool_tx_count"] = static_cast<int64_t>(blockchain_.get_mempool().size());
-        val["current_timestamp"] = Crypto::current_timestamp();
-        val["authority_node"] = authority_name_;
-        val["authority_address"] = Crypto::derive_address(authority_pubkey_);
-        val["is_chain_valid"] = blockchain_.is_chain_valid();
+    try {
+        // 1. GET /api/v1/chain/status
+        if (req.method == "GET" && req.path == "/api/v1/chain/status") {
+            JsonValue j = JsonValue::object();
+            j["status"] = "online";
+            j["chain_height"] = static_cast<double>(blockchain_.get_chain_height());
+            j["mempool_size"] = static_cast<double>(blockchain_.get_mempool().size());
+            j["authority_name"] = authority_name_;
 
-        resp.body = val.dump();
-        return resp;
-    }
-
-    // 2. GET /api/blocks
-    if (req.method == "GET" && req.path == "/api/blocks") {
-        const auto& blocks = blockchain_.get_blocks();
-        JsonValue arr = JsonValue::array();
-        for (const auto& b : blocks) {
-            arr.push_back(JsonValue::parse(b.to_json()));
-        }
-        resp.body = arr.dump();
-        return resp;
-    }
-
-    // 3. GET /api/birds_eye
-    if (req.method == "GET" && req.path == "/api/birds_eye") {
-        resp.body = blockchain_.get_birds_eye_view_json();
-        return resp;
-    }
-
-    // 4. GET /api/records
-    if (req.method == "GET" && req.path == "/api/records") {
-        std::vector<Transaction> records;
-        size_t p_pos = req.query.find("patient=");
-        if (p_pos != std::string::npos) {
-            std::string patient_addr = req.query.substr(p_pos + 8);
-            size_t ampersand = patient_addr.find('&');
-            if (ampersand != std::string::npos) patient_addr = patient_addr.substr(0, ampersand);
-            records = blockchain_.get_records_for_patient(patient_addr);
-        } else {
-            records = blockchain_.get_all_records();
+            resp.body = j.to_string();
+            return resp;
         }
 
-        JsonValue arr = JsonValue::array();
-        for (const auto& r : records) {
-            arr.push_back(JsonValue::parse(r.to_json()));
+        // 2. GET /api/v1/chain/blocks
+        if (req.method == "GET" && req.path == "/api/v1/chain/blocks") {
+            JsonValue arr = JsonValue::array();
+            uint64_t height = blockchain_.get_chain_height();
+            for (uint64_t i = 0; i < height; ++i) {
+                auto b_opt = blockchain_.get_block_by_index(i);
+                if (b_opt) {
+                    JsonValue bj = JsonValue::object();
+                    bj["index"] = static_cast<double>(b_opt->header.index);
+                    bj["timestamp"] = static_cast<double>(b_opt->header.timestamp);
+                    bj["hash"] = b_opt->get_hash_hex();
+                    bj["prev_hash"] = hash_to_hex(b_opt->header.prev_hash);
+                    bj["merkle_root"] = hash_to_hex(b_opt->header.merkle_root);
+                    bj["authority_name"] = b_opt->header.authority_name;
+                    bj["tx_count"] = static_cast<double>(b_opt->transactions.size());
+                    arr.push_back(bj);
+                }
+            }
+            resp.body = arr.to_string();
+            return resp;
         }
-        resp.body = arr.dump();
-        return resp;
-    }
 
-    // 5. POST /api/records (submit new encrypted document record)
-    if (req.method == "POST" && req.path == "/api/records") {
-        try {
-            Transaction tx = Transaction::from_json(req.body);
-            tx.type = TxType::RECORD_STORE;
-            if (tx.timestamp == 0) tx.timestamp = Crypto::current_timestamp();
-            if (tx.tx_id.empty()) tx.tx_id = tx.calculate_hash();
+        // 3. POST /api/v1/blob/store
+        if (req.method == "POST" && req.path == "/api/v1/blob/store") {
+            JsonValue body_j = JsonValue::parse(req.body);
+            Transaction tx;
+            tx.version = 1;
+            tx.type = TxType::BLOB_STORE;
+            tx.timestamp = Crypto::current_timestamp();
+            tx.nonce = static_cast<uint64_t>(body_j["nonce"].int_val);
+            tx.sender = hex_to_address(body_j["sender"].str_val);
 
-            bool added = blockchain_.add_transaction(tx);
-            if (!added) {
+            JsonValue p = body_j["payload"];
+            EncryptedBlob blob;
+            blob.blob_id = hex_to_hash(p["blob_id"].str_val);
+            blob.previous_blob_id = hex_to_hash(p["previous_blob_id"].str_val);
+            blob.owner_address = hex_to_address(p["owner_address"].str_val);
+            blob.updater_address = tx.sender;
+            blob.timestamp = tx.timestamp;
+            blob.iv = hex_to_bytes(p["iv_hex"].str_val);
+            blob.tag = hex_to_bytes(p["tag_hex"].str_val);
+            blob.data = Crypto::from_base64(p["data_b64"].str_val);
+
+            tx.payload = BlobStorePayload{blob};
+            if (blockchain_.add_transaction(tx)) {
+                JsonValue res = JsonValue::object();
+                res["status"] = "accepted";
+                res["tx_id"] = tx.get_id_hex();
+                res["blob_id"] = hash_to_hex(blob.blob_id);
+                resp.body = res.to_string();
+            } else {
                 resp.status_code = 400;
-                resp.status_text = "Bad Request";
-                resp.body = "{\"success\":false,\"error\":\"Transaction validation or signature check failed\"}";
+                resp.body = R"({"error":"Transaction rejected by mempool"})";
+            }
+            return resp;
+        }
+
+        // 3b. POST /api/v1/blob/update
+        if (req.method == "POST" && req.path == "/api/v1/blob/update") {
+            JsonValue body_j = JsonValue::parse(req.body);
+            Transaction tx;
+            tx.version = 1;
+            tx.type = TxType::BLOB_UPDATE;
+            tx.timestamp = Crypto::current_timestamp();
+            tx.nonce = static_cast<uint64_t>(body_j["nonce"].int_val);
+            tx.sender = hex_to_address(body_j["sender"].str_val);
+
+            JsonValue p = body_j["payload"];
+            Hash256 prev_id = hex_to_hash(p["previous_blob_id"].str_val);
+            JsonValue nb = p["new_blob"];
+
+            EncryptedBlob new_b;
+            new_b.blob_id = hex_to_hash(nb["blob_id"].str_val);
+            new_b.previous_blob_id = prev_id;
+            new_b.owner_address = hex_to_address(nb["owner_address"].str_val);
+            new_b.updater_address = tx.sender;
+            new_b.timestamp = tx.timestamp;
+            new_b.iv = hex_to_bytes(nb["iv_hex"].str_val);
+            new_b.tag = hex_to_bytes(nb["tag_hex"].str_val);
+            new_b.data = Crypto::from_base64(nb["data_b64"].str_val);
+
+            tx.payload = BlobUpdatePayload{prev_id, new_b};
+            if (blockchain_.add_transaction(tx)) {
+                JsonValue res = JsonValue::object();
+                res["status"] = "accepted";
+                res["tx_id"] = tx.get_id_hex();
+                res["blob_id"] = hash_to_hex(new_b.blob_id);
+                res["previous_blob_id"] = hash_to_hex(prev_id);
+                resp.body = res.to_string();
+            } else {
+                resp.status_code = 400;
+                resp.body = R"({"error":"Blob update transaction rejected"})";
+            }
+            return resp;
+        }
+
+        // 4. POST /api/v1/token/grant
+        if (req.method == "POST" && req.path == "/api/v1/token/grant") {
+            JsonValue body_j = JsonValue::parse(req.body);
+            Transaction tx;
+            tx.version = 1;
+            tx.type = TxType::TOKEN_GRANT;
+            tx.timestamp = Crypto::current_timestamp();
+            tx.nonce = static_cast<uint64_t>(body_j["nonce"].int_val);
+            tx.sender = hex_to_address(body_j["sender"].str_val);
+
+            JsonValue p = body_j["payload"];
+            TemporalAccessToken t;
+            t.token_id = hex_to_hash(p["token_id"].str_val);
+            t.target_blob_id = hex_to_hash(p["target_blob_id"].str_val);
+            t.grantor_address = hex_to_address(p["grantor_address"].str_val);
+            t.recipient_address = hex_to_address(p["recipient_address"].str_val);
+            t.valid_from = static_cast<uint64_t>(p["valid_from"].int_val);
+            t.valid_until = static_cast<uint64_t>(p["valid_until"].int_val);
+            t.encrypted_symkey = hex_to_bytes(p["encrypted_symkey_hex"].str_val);
+            t.status = 1;
+
+            tx.payload = TokenGrantPayload{t};
+            if (blockchain_.add_transaction(tx)) {
+                JsonValue res = JsonValue::object();
+                res["status"] = "accepted";
+                res["tx_id"] = tx.get_id_hex();
+                res["token_id"] = hash_to_hex(t.token_id);
+                resp.body = res.to_string();
+            } else {
+                resp.status_code = 400;
+                resp.body = R"({"error":"Token grant rejected"})";
+            }
+            return resp;
+        }
+
+        // 5. POST /api/v1/token/audit_decrypt
+        if (req.method == "POST" && req.path == "/api/v1/token/audit_decrypt") {
+            JsonValue body_j = JsonValue::parse(req.body);
+            Hash256 token_id = hex_to_hash(body_j["token_id"].str_val);
+            Address accessor = hex_to_address(body_j["accessor_address"].str_val);
+            uint64_t cur_time = body_j["timestamp"].int_val ? static_cast<uint64_t>(body_j["timestamp"].int_val) : Crypto::current_timestamp();
+
+            std::vector<uint8_t> symkey;
+            if (blockchain_.request_decryption(token_id, accessor, cur_time, symkey)) {
+                JsonValue res = JsonValue::object();
+                res["authorized"] = true;
+                res["encrypted_symkey_hex"] = bytes_to_hex(symkey.data(), symkey.size(), false);
+                resp.body = res.to_string();
+            } else {
+                resp.status_code = 403;
+                resp.body = R"({"authorized":false,"error":"Access denied: invalid or expired temporal token"})";
+            }
+            return resp;
+        }
+
+        // 5b. POST /api/v1/token/revoke
+        if (req.method == "POST" && req.path == "/api/v1/token/revoke") {
+            JsonValue body_j = JsonValue::parse(req.body);
+            Transaction tx;
+            tx.version = 1;
+            tx.type = TxType::TOKEN_REVOKE;
+            tx.timestamp = Crypto::current_timestamp();
+            tx.nonce = static_cast<uint64_t>(body_j["nonce"].int_val);
+            tx.sender = hex_to_address(body_j["sender"].str_val);
+
+            JsonValue p = body_j["payload"];
+            Hash256 target_tok = hex_to_hash(p["target_token_id"].str_val);
+            std::string reason = p["reason"].str_val;
+
+            tx.payload = TokenRevokePayload{target_tok, reason};
+            if (blockchain_.add_transaction(tx)) {
+                JsonValue res = JsonValue::object();
+                res["status"] = "accepted";
+                res["tx_id"] = tx.get_id_hex();
+                res["target_token_id"] = hash_to_hex(target_tok);
+                resp.body = res.to_string();
+            } else {
+                resp.status_code = 400;
+                resp.body = R"({"error":"Token revocation rejected"})";
+            }
+            return resp;
+        }
+
+        // 5c. GET /api/v1/token/:id
+        if (req.method == "GET" && req.path.rfind("/api/v1/token/", 0) == 0 && req.path != "/api/v1/token/grant" && req.path != "/api/v1/token/audit_decrypt" && req.path != "/api/v1/token/revoke") {
+            std::string id_str = req.path.substr(14);
+            auto token_opt = blockchain_.get_token(hex_to_hash(id_str));
+            if (token_opt) {
+                JsonValue res = JsonValue::object();
+                res["token_id"] = hash_to_hex(token_opt->token_id);
+                res["target_blob_id"] = hash_to_hex(token_opt->target_blob_id);
+                res["grantor_address"] = address_to_hex(token_opt->grantor_address);
+                res["recipient_address"] = address_to_hex(token_opt->recipient_address);
+                res["valid_from"] = static_cast<double>(token_opt->valid_from);
+                res["valid_until"] = static_cast<double>(token_opt->valid_until);
+                res["status"] = static_cast<double>(token_opt->status);
+                resp.body = res.to_string();
+            } else {
+                resp.status_code = 404;
+                resp.body = R"({"error":"Token not found"})";
+            }
+            return resp;
+        }
+
+        // 6. POST /api/v1/node/mine
+        if (req.method == "POST" && req.path == "/api/v1/node/mine") {
+            if (authority_privkey_.empty() || authority_pubkey_.empty()) {
+                resp.status_code = 400;
+                resp.body = R"({"error":"Node lacks authority signing credentials"})";
                 return resp;
             }
 
-            // Auto-mine into block by authority
-            if (!authority_privkey_.empty()) {
-                blockchain_.mine_block(authority_privkey_, authority_pubkey_, authority_name_);
-            }
-
-            JsonValue res = JsonValue::object();
-            res["success"] = true;
-            res["tx_id"] = tx.tx_id;
-            res["record_hash"] = tx.record_hash;
-            resp.body = res.dump();
-            return resp;
-        } catch (const std::exception& e) {
-            resp.status_code = 400;
-            resp.status_text = "Bad Request";
-            resp.body = std::string("{\"success\":false,\"error\":\"") + e.what() + "\"}";
-            return resp;
-        }
-    }
-
-    // 6. POST /api/keys/temporal (patient issues temporal key)
-    if (req.method == "POST" && req.path == "/api/keys/temporal") {
-        try {
-            Transaction tx = Transaction::from_json(req.body);
-            tx.type = TxType::TEMPORAL_KEY_GRANT;
-            if (tx.timestamp == 0) tx.timestamp = Crypto::current_timestamp();
-            if (tx.valid_from == 0) tx.valid_from = tx.timestamp;
-            if (tx.tx_id.empty()) tx.tx_id = tx.calculate_hash();
-
-            bool added = blockchain_.add_transaction(tx);
-            if (!added) {
-                resp.status_code = 400;
-                resp.status_text = "Bad Request";
-                resp.body = "{\"success\":false,\"error\":\"Temporal key grant rejected\"}";
-                return resp;
-            }
-
-            if (!authority_privkey_.empty()) {
-                blockchain_.mine_block(authority_privkey_, authority_pubkey_, authority_name_);
-            }
-
-            JsonValue res = JsonValue::object();
-            res["success"] = true;
-            res["tx_id"] = tx.tx_id;
-            res["valid_until"] = tx.valid_until;
-            resp.body = res.dump();
-            return resp;
-        } catch (const std::exception& e) {
-            resp.status_code = 400;
-            resp.body = std::string("{\"success\":false,\"error\":\"") + e.what() + "\"}";
-            return resp;
-        }
-    }
-
-    // 7. POST /api/keys/delegate (hospital delegates temporal key to doctor)
-    if (req.method == "POST" && req.path == "/api/keys/delegate") {
-        try {
-            Transaction tx = Transaction::from_json(req.body);
-            tx.type = TxType::TEMPORAL_KEY_DELEGATE;
-            if (tx.timestamp == 0) tx.timestamp = Crypto::current_timestamp();
-            if (tx.valid_from == 0) tx.valid_from = tx.timestamp;
-            if (tx.tx_id.empty()) tx.tx_id = tx.calculate_hash();
-
-            bool added = blockchain_.add_transaction(tx);
-            if (!added) {
-                resp.status_code = 400;
-                resp.body = "{\"success\":false,\"error\":\"Temporal key delegation rejected (check parent key validity and expiration)\"}";
-                return resp;
-            }
-
-            if (!authority_privkey_.empty()) {
-                blockchain_.mine_block(authority_privkey_, authority_pubkey_, authority_name_);
-            }
-
-            JsonValue res = JsonValue::object();
-            res["success"] = true;
-            res["tx_id"] = tx.tx_id;
-            res["parent_tx_id"] = tx.parent_tx_id;
-            res["doctor_recipient"] = tx.recipient;
-            resp.body = res.dump();
-            return resp;
-        } catch (const std::exception& e) {
-            resp.status_code = 400;
-            resp.body = std::string("{\"success\":false,\"error\":\"") + e.what() + "\"}";
-            return resp;
-        }
-    }
-
-    // 8. POST /api/keys/revoke
-    if (req.method == "POST" && req.path == "/api/keys/revoke") {
-        try {
-            Transaction tx = Transaction::from_json(req.body);
-            tx.type = TxType::TEMPORAL_KEY_REVOKE;
-            if (tx.timestamp == 0) tx.timestamp = Crypto::current_timestamp();
-            if (tx.tx_id.empty()) tx.tx_id = tx.calculate_hash();
-
-            bool added = blockchain_.add_transaction(tx);
-            if (added && !authority_privkey_.empty()) {
-                blockchain_.mine_block(authority_privkey_, authority_pubkey_, authority_name_);
-            }
-
-            JsonValue res = JsonValue::object();
-            res["success"] = added;
-            resp.body = res.dump();
-            return resp;
-        } catch (const std::exception& e) {
-            resp.status_code = 400;
-            resp.body = std::string("{\"success\":false,\"error\":\"") + e.what() + "\"}";
-            return resp;
-        }
-    }
-
-    // 9. GET /api/keys/active
-    if (req.method == "GET" && req.path == "/api/keys/active") {
-        auto active = blockchain_.get_active_temporal_keys();
-        JsonValue arr = JsonValue::array();
-        for (const auto& k : active) {
-            arr.push_back(JsonValue::parse(k.to_json()));
-        }
-        resp.body = arr.dump();
-        return resp;
-    }
-
-    // 10. GET /api/keys/by_holder?holder=0x...
-    if (req.method == "GET" && req.path == "/api/keys/by_holder") {
-        std::string holder;
-        size_t h_pos = req.query.find("holder=");
-        if (h_pos != std::string::npos) {
-            holder = req.query.substr(h_pos + 7);
-            size_t amp = holder.find('&');
-            if (amp != std::string::npos) holder = holder.substr(0, amp);
-        }
-        auto keys = blockchain_.get_temporal_keys_for_holder(holder);
-        JsonValue arr = JsonValue::array();
-        for (const auto& k : keys) {
-            arr.push_back(JsonValue::parse(k.to_json()));
-        }
-        resp.body = arr.dump();
-        return resp;
-    }
-
-    // 11. GET /api/access/check?record=...&accessor=...
-    if (req.method == "GET" && req.path == "/api/access/check") {
-        std::string rec;
-        std::string acc;
-        size_t r_pos = req.query.find("record=");
-        if (r_pos != std::string::npos) {
-            rec = req.query.substr(r_pos + 7);
-            size_t amp = rec.find('&');
-            if (amp != std::string::npos) rec = rec.substr(0, amp);
-        }
-        size_t a_pos = req.query.find("accessor=");
-        if (a_pos != std::string::npos) {
-            acc = req.query.substr(a_pos + 9);
-            size_t amp = acc.find('&');
-            if (amp != std::string::npos) acc = acc.substr(0, amp);
-        }
-
-        bool authorized = blockchain_.is_access_authorized(rec, acc);
-        JsonValue res = JsonValue::object();
-        res["record_hash"] = rec;
-        res["accessor"] = acc;
-        res["is_authorized"] = authorized;
-        resp.body = res.dump();
-        return resp;
-    }
-
-    // 12. GET /api/trace?id=...
-    if (req.method == "GET" && req.path == "/api/trace") {
-        std::string target_id;
-        size_t id_pos = req.query.find("id=");
-        if (id_pos != std::string::npos) {
-            target_id = req.query.substr(id_pos + 3);
-            size_t amp = target_id.find('&');
-            if (amp != std::string::npos) target_id = target_id.substr(0, amp);
-        }
-
-        LineageNode node = blockchain_.trace_lineage(target_id);
-        JsonValue res = JsonValue::object();
-        res["tx_id"] = node.tx_id;
-        res["type"] = node.type;
-        res["sender"] = node.sender;
-        res["recipient"] = node.recipient;
-        res["record_hash"] = node.record_hash;
-        res["valid_from"] = node.valid_from;
-        res["valid_until"] = node.valid_until;
-        res["parent_tx_id"] = node.parent_tx_id;
-        res["is_active"] = node.is_active;
-
-        JsonValue delegations = JsonValue::array();
-        for (const auto& child : node.child_delegations) {
-            delegations.push_back(child);
-        }
-        res["child_delegations"] = delegations;
-
-        resp.body = res.dump();
-        return resp;
-    }
-
-    // 13. POST /api/wallet/generate (EC keypair generator helper)
-    if (req.method == "POST" && req.path == "/api/wallet/generate") {
-        KeyPair kp = Crypto::generate_ec_keypair();
-        JsonValue res = JsonValue::object();
-        res["address"] = kp.address;
-        res["public_key_pem"] = kp.public_key_pem;
-        res["private_key_pem"] = kp.private_key_pem;
-        resp.body = res.dump();
-        return resp;
-    }
-
-    // 14. POST /api/mine
-    if (req.method == "POST" && req.path == "/api/mine") {
-        try {
             Block b = blockchain_.mine_block(authority_privkey_, authority_pubkey_, authority_name_);
             JsonValue res = JsonValue::object();
-            res["success"] = true;
-            res["block_index"] = static_cast<int64_t>(b.index);
-            res["block_hash"] = b.hash;
-            res["tx_count"] = static_cast<int64_t>(b.transactions.size());
-            resp.body = res.dump();
-            return resp;
-        } catch (const std::exception& e) {
-            resp.status_code = 400;
-            resp.body = std::string("{\"success\":false,\"error\":\"") + e.what() + "\"}";
+            res["status"] = "mined";
+            res["index"] = static_cast<double>(b.header.index);
+            res["hash"] = b.get_hash_hex();
+            res["tx_count"] = static_cast<double>(b.transactions.size());
+            resp.body = res.to_string();
             return resp;
         }
+
+        // 7. GET /api/v1/blob/:id
+        if (req.method == "GET" && req.path.rfind("/api/v1/blob/", 0) == 0) {
+            std::string id_str = req.path.substr(13);
+            auto blob_opt = blockchain_.get_blob(hex_to_hash(id_str));
+            if (blob_opt) {
+                JsonValue res = JsonValue::object();
+                res["blob_id"] = hash_to_hex(blob_opt->blob_id);
+                res["previous_blob_id"] = hash_to_hex(blob_opt->previous_blob_id);
+                res["owner_address"] = address_to_hex(blob_opt->owner_address);
+                res["updater_address"] = address_to_hex(blob_opt->updater_address);
+                res["timestamp"] = static_cast<double>(blob_opt->timestamp);
+                res["iv_hex"] = bytes_to_hex(blob_opt->iv.data(), blob_opt->iv.size(), false);
+                res["tag_hex"] = bytes_to_hex(blob_opt->tag.data(), blob_opt->tag.size(), false);
+                res["data_b64"] = Crypto::to_base64(blob_opt->data.data(), blob_opt->data.size());
+                resp.body = res.to_string();
+            } else {
+                resp.status_code = 404;
+                resp.body = R"({"error":"Encrypted blob not found"})";
+            }
+            return resp;
+        }
+
+        // 404 Fallback
+        resp.status_code = 404;
+        resp.body = R"({"error":"Endpoint not found"})";
+    } catch (const std::exception& e) {
+        resp.status_code = 500;
+        JsonValue err = JsonValue::object();
+        err["error"] = e.what();
+        resp.body = err.to_string();
     }
 
-    resp.status_code = 404;
-    resp.status_text = "Not Found";
-    resp.body = "{\"error\":\"Endpoint not found\"}";
     return resp;
 }
 

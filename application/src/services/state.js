@@ -12,25 +12,25 @@ export const DEMO_ACCOUNTS = {
   },
   hospital: {
     address: '0x92BC34eD5a109aC7F59f8A43b92C78A21098E640',
-    name: 'Apollo City Hospital & Research Center',
+    name: 'Apollo City Hospital & Medical Center',
     role: 'hospital',
-    desc: 'Healthcare Facility & Doctor Network'
-  },
-  doctor_rajesh: {
-    address: '0x38AF44cE15993a4dB2e9575fDb2b28F10815B452',
-    name: 'Dr. Rajesh Sharma, MD',
-    role: 'doctor',
-    specialty: 'Cardiology Specialist',
-    hospital: 'Apollo City Hospital',
-    desc: 'Attending Cardiologist'
-  },
-  doctor_priya: {
-    address: '0x64FD1129bca5988e401FcEb6Db02347201E9804B',
-    name: 'Dr. Priya Patel, MS',
-    role: 'doctor',
-    specialty: 'Endocrinology & Internal Medicine',
-    hospital: 'Apollo City Hospital',
-    desc: 'Senior Endocrinologist'
+    desc: 'Hospital Facility (Managing affiliated doctors and patient keys)',
+    doctors: [
+      {
+        id: 'doc-1',
+        name: 'Dr. Rajesh Sharma, MD',
+        specialty: 'Cardiology Specialist',
+        address: '0x38AF44cE15993a4dB2e9575fDb2b28F10815B452',
+        activeCases: 1
+      },
+      {
+        id: 'doc-2',
+        name: 'Dr. Priya Patel, MS',
+        specialty: 'Senior Endocrinologist',
+        address: '0x64FD1129bca5988e401FcEb6Db02347201E9804B',
+        activeCases: 0
+      }
+    ]
   },
   authority: {
     address: '0x10A98F722Bc8923a1F1388b14A0c23947b1981F4',
@@ -39,6 +39,9 @@ export const DEMO_ACCOUNTS = {
     desc: 'Institutional PoA Validator'
   }
 };
+
+DEMO_ACCOUNTS.doctor_rajesh = DEMO_ACCOUNTS.hospital.doctors[0];
+DEMO_ACCOUNTS.doctor_priya = DEMO_ACCOUNTS.hospital.doctors[1];
 
 class StateService {
   constructor() {
@@ -49,22 +52,7 @@ class StateService {
     this.selectedModel = localStorage.getItem('sanjeev_model') || 'anthropic/claude-3.5-sonnet';
     
     // Doctor registry under the hospital
-    this.hospitalDoctors = [
-      {
-        id: 'doc-1',
-        name: 'Dr. Rajesh Sharma, MD',
-        specialty: 'Cardiology',
-        address: DEMO_ACCOUNTS.doctor_rajesh.address,
-        activeCases: 1
-      },
-      {
-        id: 'doc-2',
-        name: 'Dr. Priya Patel, MS',
-        specialty: 'Endocrinology',
-        address: DEMO_ACCOUNTS.doctor_priya.address,
-        activeCases: 0
-      }
-    ];
+    this.hospitalDoctors = DEMO_ACCOUNTS.hospital.doctors;
 
     // Local cached records and temporal keys
     this.records = [];
@@ -85,11 +73,7 @@ class StateService {
   setUser(accountKey) {
     if (DEMO_ACCOUNTS[accountKey]) {
       this.currentUser = DEMO_ACCOUNTS[accountKey];
-      if (this.currentUser.role === 'patient') {
-        this.currentMode = 'patient';
-      } else if (this.currentUser.role === 'hospital' || this.currentUser.role === 'doctor') {
-        this.currentMode = 'hospital';
-      }
+      this.currentMode = this.currentUser.role;
       this.notify();
     }
   }

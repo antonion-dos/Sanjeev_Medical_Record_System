@@ -121,6 +121,10 @@ public:
         return ss.str();
     }
 
+    std::string to_string() const {
+        return dump();
+    }
+
     void serialize(std::ostream& os) const {
         switch (type) {
             case TYPE_NULL: os << "null"; break;

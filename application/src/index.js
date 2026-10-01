@@ -8,6 +8,8 @@ import { api } from './services/api.js';
 import { PatientView } from './views/patient.js';
 import { HospitalView } from './views/hospital.js';
 import { ExplorerView } from './views/explorer.js';
+import { SettingsModal } from './views/settings-modal.js';
+import { AuthModal as SupabaseAuthModal } from './views/auth-modal.js';
 import { auth } from './services/auth.js';
 import { AuthModal } from './components/AuthModal.js';
 
@@ -152,13 +154,13 @@ class SanjeevApp {
             </div>
           </a>
 
-          <!-- Role / Mode Switcher -->
+          <!-- Role / Mode Switcher: STRICTLY Patient Mode and Hospital Mode -->
           <nav class="mode-nav">
             <button class="mode-btn ${appState.currentMode === 'patient' ? 'active' : ''}" data-mode="patient">
               👤 Patient Mode
             </button>
             <button class="mode-btn ${appState.currentMode === 'hospital' ? 'active' : ''}" data-mode="hospital">
-              🏥 Hospital / Doctor Mode
+              🏥 Hospital Mode
             </button>
             <button class="mode-btn ${appState.currentMode === 'explorer' ? 'active' : ''}" data-mode="explorer">
               🌐 Birds-Eye Viewer
@@ -166,24 +168,26 @@ class SanjeevApp {
           </nav>
 
           <!-- Current Account Selector & Node Status -->
-          <div class="user-status">
+          <div class="user-status" style="display: flex; align-items: center; gap: 0.5rem;">
             <div class="status-badge" id="node-status-badge" title="Blockchain Node Connection">
               <span class="status-dot" id="node-status-dot"></span>
               <span id="node-status-text">Checking Node...</span>
             </div>
 
-            <select class="account-selector" id="account-dropdown" title="Simulated Wallet Identity">
+            <button class="btn btn-secondary btn-sm" id="btn-header-auth" title="Authentication & Keypair Link">
+              🔐 <span id="header-auth-label">${appState.currentUser.email ? appState.currentUser.name : 'Sign In'}</span>
+            </button>
+
+            <button class="btn btn-secondary btn-sm" id="btn-header-settings" title="Application & Node Settings">
+              ⚙️
+            </button>
+
+            <select class="account-selector" id="account-dropdown" title="Demo Switcher">
               <option value="patient" ${appState.currentUser === DEMO_ACCOUNTS.patient ? 'selected' : ''}>
-                👤 Alice Sharma (Patient)
+                👤 Alice Sharma (Demo)
               </option>
               <option value="hospital" ${appState.currentUser === DEMO_ACCOUNTS.hospital ? 'selected' : ''}>
-                🏥 Apollo Hospital (Enterprise)
-              </option>
-              <option value="doctor_rajesh" ${appState.currentUser === DEMO_ACCOUNTS.doctor_rajesh ? 'selected' : ''}>
-                🩺 Dr. Rajesh Sharma (Doctor)
-              </option>
-              <option value="doctor_priya" ${appState.currentUser === DEMO_ACCOUNTS.doctor_priya ? 'selected' : ''}>
-                🩺 Dr. Priya Patel (Doctor)
+                🏥 Apollo Hospital (Demo)
               </option>
             </select>
           </div>
@@ -201,6 +205,13 @@ class SanjeevApp {
         btn.classList.remove('active');
       }
     });
+
+    const authLabel = document.getElementById('header-auth-label');
+    if (authLabel) {
+      authLabel.innerText = appState.currentUser.email 
+        ? `${appState.currentUser.name} (${appState.currentUser.address.substring(0, 6)}...)` 
+        : 'Sign In';
+    }
 
     const dropdown = document.getElementById('account-dropdown');
     if (dropdown && appState.currentUser) {
@@ -244,6 +255,14 @@ class SanjeevApp {
       if (e.target.closest('#logout-btn')) {
         auth.logout();
         window.location.reload();
+      }
+
+      if (e.target.closest('#btn-header-settings')) {
+        SettingsModal.open();
+      }
+
+      if (e.target.closest('#btn-header-auth')) {
+        SupabaseAuthModal.open();
       }
     });
 
