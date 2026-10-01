@@ -6,17 +6,67 @@
 
 import { appState, DEMO_ACCOUNTS } from './state.js';
 import { ClientCrypto } from './crypto.js';
+import { ConfigManager } from '../config/node-config.js';
 
 export class BlockchainApi {
-  constructor(baseUrl = 'http://localhost:8080') {
-    this.baseUrl = baseUrl;
+  constructor(baseUrl = null) {
+    this.configuredUrl = baseUrl;
     this.isOnline = false;
+    this.lastLatencyMs = null;
     this.initLocalLedger();
+  }
+
+  getBaseUrl() {
+    return this.configuredUrl || ConfigManager.getNodeUrl();
+  }
+
+  setBaseUrl(url) {
+    this.configuredUrl = ConfigManager.setNodeUrl(url);
+  }
+
+  async verifyNodeConnection(customUrl = null) {
+    const targetUrl = customUrl ? customUrl.trim().replace(/\/+$/, '') : this.getBaseUrl();
+    const start = performance.now();
+    try {
+      const resp = await fetch(`${targetUrl}/api/v1/chain/status`, {
+        signal: AbortSignal.timeout(3000)
+      });
+      const latencyMs = Math.round(performance.now() - start);
+      if (resp.ok) {
+        const data = await resp.json();
+        this.isOnline = true;
+        this.lastLatencyMs = latencyMs;
+        return {
+          success: true,
+          latencyMs,
+          chainHeight: data.chain_height ?? 0,
+          mempoolSize: data.mempool_size ?? 0,
+          authorityName: data.authority_name || 'Ministry of Health',
+          url: targetUrl
+        };
+      }
+      return {
+        success: false,
+        latencyMs,
+        error: `HTTP ${resp.status}: ${resp.statusText}`,
+        url: targetUrl
+      };
+    } catch (err) {
+      const latencyMs = Math.round(performance.now() - start);
+      return {
+        success: false,
+        latencyMs,
+        error: err.name === 'TimeoutError' ? 'Connection Timed Out' : (err.message || 'Connection Refused'),
+        url: targetUrl
+      };
+    }
   }
 
   async checkConnection() {
     try {
-      const resp = await fetch(`${this.baseUrl}/api/status`, { signal: AbortSignal.timeout(1200) });
+      const resp = await fetch(`${this.getBaseUrl()}/api/v1/chain/status`, {
+        signal: AbortSignal.timeout(1200)
+      });
       if (resp.ok) {
         this.isOnline = true;
         return true;
@@ -147,8 +197,16 @@ export class BlockchainApi {
   async getStatus() {
     if (await this.checkConnection()) {
       try {
-        const res = await fetch(`${this.baseUrl}/api/status`);
-        return await res.json();
+        const res = await fetch(`${this.getBaseUrl()}/api/v1/chain/status`);
+        const data = await res.json();
+        return {
+          name: 'Sanjeev PoA Blockchain Node',
+          chain_height: data.chain_height,
+          mempool_size: data.mempool_size,
+          authority_node: data.authority_name || DEMO_ACCOUNTS.authority.name,
+          authority_address: DEMO_ACCOUNTS.authority.address,
+          is_chain_valid: true
+        };
       } catch (err) {
         console.warn('Fallback to local state for getStatus:', err);
       }
@@ -166,7 +224,7 @@ export class BlockchainApi {
   async getBlocks() {
     if (await this.checkConnection()) {
       try {
-        const res = await fetch(`${this.baseUrl}/api/blocks`);
+        const res = await fetch(`${this.getBaseUrl()}/api/v1/chain/blocks`);
         const blocks = await res.json();
         appState.blocks = blocks;
         return blocks;
@@ -181,12 +239,14 @@ export class BlockchainApi {
     if (await this.checkConnection()) {
       try {
         const url = patientAddress 
-          ? `${this.baseUrl}/api/records?patient=${patientAddress}`
-          : `${this.baseUrl}/api/records`;
+          ? `${this.getBaseUrl()}/api/v1/records?patient=${patientAddress}`
+          : `${this.getBaseUrl()}/api/v1/records`;
         const res = await fetch(url);
-        const data = await res.json();
-        appState.records = data;
-        return data;
+        if (res.ok) {
+          const data = await res.json();
+          appState.records = data;
+          return data;
+        }
       } catch (err) {
         console.warn('Fallback to local records:', err);
       }
