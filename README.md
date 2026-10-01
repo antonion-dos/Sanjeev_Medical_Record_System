@@ -46,19 +46,54 @@ Sanjeev/
 - OpenSSL 3.x
 - Node.js 18+ (used strictly for build bundling and local static serving)
 
-### 1. Build & Run the Blockchain
+### 1. Build & Run the Blockchain Node
+
 ```bash
 cd blockchain
 mkdir -p build && cd build
 cmake ..
-make -j$(nproc)
+cmake --build .
 
-# Run test suite
+# Run automated edge-case and core test suites (6/6 suites)
 ctest --output-on-failure
 
 # Start the node & HTTP REST server
-./sanjeev_node --port 8080
+./sanjeev_node --port 8080 --db sanjeev_node.db --name "Ministry of Health Validator #1"
 ```
+The node starts an HTTP REST server listening on `http://localhost:8080` backed by an SQLite WAL database.
+
+#### Verifying Node Health & Ledger via REST API
+
+In PowerShell or bash, query the node's live consensus state:
+
+```bash
+# Check node status, block height, and mempool
+curl -s http://localhost:8080/api/v1/chain/status
+
+# Inspect mined blocks, hashes, and Merkle roots
+curl -s http://localhost:8080/api/v1/chain/blocks
+
+# Mine pending transactions in mempool into a new block
+curl -X POST http://localhost:8080/api/v1/node/mine -H "Content-Type: application/json" -d "{}"
+```
+
+#### Real-Time Verification via CLI Trace Tool (`sanjeev_trace`)
+
+Keep the tracer open in a separate terminal to watch new blocks, transactions, and on-chain decryption audit receipts streamed live as they occur:
+
+```bash
+# Live follow mode (streams blocks and audit receipts in real-time)
+./sanjeev_trace --chain --db sanjeev_node.db --follow
+
+# Audit specific document revision history and decryption events
+./sanjeev_trace --blob <blob_id_hex> --db sanjeev_node.db
+
+# Inspect temporal access token validity and revocation status
+./sanjeev_trace --token <token_id_hex> --db sanjeev_node.db
+```
+
+> For full REST endpoint schemas and payload structures, see [blockchain/API.md](blockchain/API.md).
+> For the comprehensive zero-knowledge consensus specification, see [blockchain/BLOCKCHAIN_EXPLAINED.txt](blockchain/BLOCKCHAIN_EXPLAINED.txt).
 
 ### 2. Build & Run the Application
 ```bash
