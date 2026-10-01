@@ -277,6 +277,45 @@ HttpResponse HttpServer::route_request(const HttpRequest& req) {
             return resp;
         }
 
+        // 3b. POST /api/v1/blob/update
+        if (req.method == "POST" && req.path == "/api/v1/blob/update") {
+            JsonValue body_j = JsonValue::parse(req.body);
+            Transaction tx;
+            tx.version = 1;
+            tx.type = TxType::BLOB_UPDATE;
+            tx.timestamp = Crypto::current_timestamp();
+            tx.nonce = static_cast<uint64_t>(body_j["nonce"].int_val);
+            tx.sender = hex_to_address(body_j["sender"].str_val);
+
+            JsonValue p = body_j["payload"];
+            Hash256 prev_id = hex_to_hash(p["previous_blob_id"].str_val);
+            JsonValue nb = p["new_blob"];
+
+            EncryptedBlob new_b;
+            new_b.blob_id = hex_to_hash(nb["blob_id"].str_val);
+            new_b.previous_blob_id = prev_id;
+            new_b.owner_address = hex_to_address(nb["owner_address"].str_val);
+            new_b.updater_address = tx.sender;
+            new_b.timestamp = tx.timestamp;
+            new_b.iv = hex_to_bytes(nb["iv_hex"].str_val);
+            new_b.tag = hex_to_bytes(nb["tag_hex"].str_val);
+            new_b.data = Crypto::from_base64(nb["data_b64"].str_val);
+
+            tx.payload = BlobUpdatePayload{prev_id, new_b};
+            if (blockchain_.add_transaction(tx)) {
+                JsonValue res = JsonValue::object();
+                res["status"] = "accepted";
+                res["tx_id"] = tx.get_id_hex();
+                res["blob_id"] = hash_to_hex(new_b.blob_id);
+                res["previous_blob_id"] = hash_to_hex(prev_id);
+                resp.body = res.to_string();
+            } else {
+                resp.status_code = 400;
+                resp.body = R"({"error":"Blob update transaction rejected"})";
+            }
+            return resp;
+        }
+
         // 4. POST /api/v1/token/grant
         if (req.method == "POST" && req.path == "/api/v1/token/grant") {
             JsonValue body_j = JsonValue::parse(req.body);
@@ -328,6 +367,55 @@ HttpResponse HttpServer::route_request(const HttpRequest& req) {
             } else {
                 resp.status_code = 403;
                 resp.body = R"({"authorized":false,"error":"Access denied: invalid or expired temporal token"})";
+            }
+            return resp;
+        }
+
+        // 5b. POST /api/v1/token/revoke
+        if (req.method == "POST" && req.path == "/api/v1/token/revoke") {
+            JsonValue body_j = JsonValue::parse(req.body);
+            Transaction tx;
+            tx.version = 1;
+            tx.type = TxType::TOKEN_REVOKE;
+            tx.timestamp = Crypto::current_timestamp();
+            tx.nonce = static_cast<uint64_t>(body_j["nonce"].int_val);
+            tx.sender = hex_to_address(body_j["sender"].str_val);
+
+            JsonValue p = body_j["payload"];
+            Hash256 target_tok = hex_to_hash(p["target_token_id"].str_val);
+            std::string reason = p["reason"].str_val;
+
+            tx.payload = TokenRevokePayload{target_tok, reason};
+            if (blockchain_.add_transaction(tx)) {
+                JsonValue res = JsonValue::object();
+                res["status"] = "accepted";
+                res["tx_id"] = tx.get_id_hex();
+                res["target_token_id"] = hash_to_hex(target_tok);
+                resp.body = res.to_string();
+            } else {
+                resp.status_code = 400;
+                resp.body = R"({"error":"Token revocation rejected"})";
+            }
+            return resp;
+        }
+
+        // 5c. GET /api/v1/token/:id
+        if (req.method == "GET" && req.path.rfind("/api/v1/token/", 0) == 0 && req.path != "/api/v1/token/grant" && req.path != "/api/v1/token/audit_decrypt" && req.path != "/api/v1/token/revoke") {
+            std::string id_str = req.path.substr(14);
+            auto token_opt = blockchain_.get_token(hex_to_hash(id_str));
+            if (token_opt) {
+                JsonValue res = JsonValue::object();
+                res["token_id"] = hash_to_hex(token_opt->token_id);
+                res["target_blob_id"] = hash_to_hex(token_opt->target_blob_id);
+                res["grantor_address"] = address_to_hex(token_opt->grantor_address);
+                res["recipient_address"] = address_to_hex(token_opt->recipient_address);
+                res["valid_from"] = static_cast<double>(token_opt->valid_from);
+                res["valid_until"] = static_cast<double>(token_opt->valid_until);
+                res["status"] = static_cast<double>(token_opt->status);
+                resp.body = res.to_string();
+            } else {
+                resp.status_code = 404;
+                resp.body = R"({"error":"Token not found"})";
             }
             return resp;
         }

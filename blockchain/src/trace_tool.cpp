@@ -3,8 +3,20 @@
 #include <iostream>
 #include <iomanip>
 #include <string>
+#include <atomic>
+#include <csignal>
+#include <thread>
+#include <chrono>
+#include <set>
 
 using namespace Sanjeev;
+
+namespace {
+    std::atomic<bool> g_tracer_running{true};
+    void tracer_sig_handler(int) {
+        g_tracer_running = false;
+    }
+}
 
 void print_banner() {
     std::cout << "===============================================================\n";
@@ -14,10 +26,45 @@ void print_banner() {
 
 void print_usage(const char* prog) {
     std::cout << "Usage:\n";
-    std::cout << "  " << prog << " --chain [--db <path>]\n";
-    std::cout << "  " << prog << " --blob <blob_id_hex> [--db <path>]\n";
+    std::cout << "  " << prog << " --chain [--db <path>] [--follow]\n";
+    std::cout << "  " << prog << " --blob <blob_id_hex> [--db <path>] [--follow]\n";
     std::cout << "  " << prog << " --token <token_id_hex> [--db <path>]\n";
     std::cout << "  " << prog << " --tx <tx_id_hex> [--db <path>]\n";
+    std::cout << "Options:\n";
+    std::cout << "  --follow, -f    Stay open and stream new blocks and events in real time\n";
+    std::cout << "  --db <path>     Path to SQLite database (default: sanjeev_node.db)\n";
+}
+
+void print_transaction_details(const Transaction& tx, const std::string& prefix = "   └─ ") {
+    std::cout << prefix << "[Tx " << tx_type_to_string(tx.type) << "] ID: "
+              << tx.get_id_hex().substr(0, 16) << "..."
+              << " | Sender: " << address_to_hex(tx.sender).substr(0, 14) << "...\n";
+
+    if (std::holds_alternative<BlobStorePayload>(tx.payload)) {
+        const auto& p = std::get<BlobStorePayload>(tx.payload);
+        std::cout << "      • Target Blob: " << hash_to_hex(p.blob.blob_id).substr(0, 20) << "...\n"
+                  << "      • Owner: " << address_to_hex(p.blob.owner_address).substr(0, 14) << "..."
+                  << " | Size: " << p.blob.data.size() << " bytes\n";
+    } else if (std::holds_alternative<BlobUpdatePayload>(tx.payload)) {
+        const auto& p = std::get<BlobUpdatePayload>(tx.payload);
+        std::cout << "      • New Blob: " << hash_to_hex(p.new_blob.blob_id).substr(0, 20) << "...\n"
+                  << "      • Previous Version: " << hash_to_hex(p.previous_blob_id).substr(0, 20) << "...\n"
+                  << "      • Updater: " << address_to_hex(p.new_blob.updater_address).substr(0, 14) << "...\n";
+    } else if (std::holds_alternative<TokenGrantPayload>(tx.payload)) {
+        const auto& p = std::get<TokenGrantPayload>(tx.payload);
+        std::cout << "      • Token ID: " << hash_to_hex(p.token.token_id).substr(0, 20) << "...\n"
+                  << "      • Recipient: " << address_to_hex(p.token.recipient_address).substr(0, 14) << "..."
+                  << " | Window: [" << p.token.valid_from << " -> " << p.token.valid_until << "]\n";
+    } else if (std::holds_alternative<TokenRevokePayload>(tx.payload)) {
+        const auto& p = std::get<TokenRevokePayload>(tx.payload);
+        std::cout << "      • Revoked Token ID: " << hash_to_hex(p.target_token_id).substr(0, 20) << "...\n"
+                  << "      • Reason: " << p.reason << "\n";
+    } else if (std::holds_alternative<DecryptionAuditPayload>(tx.payload)) {
+        const auto& p = std::get<DecryptionAuditPayload>(tx.payload);
+        std::cout << "      • [DECRYPTION AUDIT] Accessor: " << address_to_hex(p.accessor_address).substr(0, 14) << "...\n"
+                  << "      • Accessed Blob: " << hash_to_hex(p.blob_id).substr(0, 20) << "...\n"
+                  << "      • Token Used: " << hash_to_hex(p.token_id).substr(0, 20) << "...\n";
+    }
 }
 
 void trace_chain(Blockchain& chain) {
@@ -37,15 +84,48 @@ void trace_chain(Blockchain& chain) {
                   << " | Time: " << b->header.timestamp << "\n";
 
         for (const auto& tx : b->transactions) {
-            std::cout << "   └─ [Tx " << tx_type_to_string(tx.type) << "] ID: "
-                      << tx.get_id_hex().substr(0, 16) << "..."
-                      << " Sender: " << address_to_hex(tx.sender).substr(0, 12) << "...\n";
+            print_transaction_details(tx);
         }
     }
     std::cout << "---------------------------------------------------------------\n\n";
 }
 
-void trace_blob(Blockchain& chain, const std::string& blob_hex) {
+void watch_chain(Blockchain& chain) {
+    trace_chain(chain);
+    uint64_t last_height = chain.get_chain_height();
+
+    std::cout << "[*] Watching ledger in REAL-TIME for new blocks, transactions, and audit receipts...\n";
+    std::cout << "    (Press Ctrl+C to stop realtime tracer)\n\n";
+
+    while (g_tracer_running) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        uint64_t cur_height = chain.get_chain_height();
+        if (cur_height > last_height) {
+            for (uint64_t i = last_height; i < cur_height; ++i) {
+                auto b = chain.get_block_by_index(i);
+                if (!b) continue;
+
+                std::cout << "\n>>> [REAL-TIME LEDGER EVENT] New Block Sealed! <<<\n";
+                std::cout << "  Block #" << b->header.index
+                          << " | Hash: " << b->get_hash_hex() << "\n"
+                          << "  PrevHash : " << hash_to_hex(b->header.prev_hash).substr(0, 20) << "...\n"
+                          << "  Merkle   : " << hash_to_hex(b->header.merkle_root).substr(0, 20) << "...\n"
+                          << "  Authority: " << b->header.authority_name << "\n"
+                          << "  Timestamp: " << b->header.timestamp << "\n"
+                          << "  Transactions (" << b->transactions.size() << "):\n";
+
+                for (const auto& tx : b->transactions) {
+                    print_transaction_details(tx, "    └─ ");
+                }
+                std::cout << "---------------------------------------------------------------\n" << std::flush;
+            }
+            last_height = cur_height;
+        }
+    }
+    std::cout << "\n[Tracer] Real-time session terminated cleanly.\n";
+}
+
+void trace_blob(Blockchain& chain, const std::string& blob_hex, bool follow = false) {
     Hash256 blob_id = hex_to_hash(blob_hex);
     auto blob_opt = chain.get_blob(blob_id);
 
@@ -86,6 +166,25 @@ void trace_blob(Blockchain& chain, const std::string& blob_hex) {
         }
     }
     std::cout << "\n";
+
+    if (follow) {
+        size_t last_audit_count = audits.size();
+        std::cout << "[*] Watching document in REAL-TIME for access audits and revisions (Ctrl+C to stop)...\n";
+        while (g_tracer_running) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            auto cur_audits = chain.get_audits_for_blob(blob_id);
+            if (cur_audits.size() > last_audit_count) {
+                for (size_t i = last_audit_count; i < cur_audits.size(); ++i) {
+                    const auto& a = cur_audits[i];
+                    std::cout << ">>> [REAL-TIME ACCESS AUDIT] Accessor: " << address_to_hex(a.accessor_address)
+                              << " | Token: " << hash_to_hex(a.token_id).substr(0, 16) << "..."
+                              << " | Time: " << a.access_timestamp << "\n" << std::flush;
+                }
+                last_audit_count = cur_audits.size();
+            }
+        }
+        std::cout << "\n[Tracer] Stopped.\n";
+    }
 }
 
 void trace_token(Blockchain& chain, const std::string& token_hex) {
@@ -126,11 +225,15 @@ void trace_tx(Blockchain& chain, const std::string& tx_hex) {
 }
 
 int main(int argc, char* argv[]) {
+    std::signal(SIGINT, tracer_sig_handler);
+    std::signal(SIGTERM, tracer_sig_handler);
+
     print_banner();
 
     std::string db_path = "sanjeev_node.db";
     std::string action;
     std::string target_id;
+    bool follow = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -147,6 +250,8 @@ int main(int argc, char* argv[]) {
         } else if (arg == "--tx" && i + 1 < argc) {
             action = "tx";
             target_id = argv[++i];
+        } else if (arg == "--follow" || arg == "-f" || arg == "--watch") {
+            follow = true;
         } else if (arg == "--help" || arg == "-h") {
             print_usage(argv[0]);
             return 0;
@@ -165,9 +270,13 @@ int main(int argc, char* argv[]) {
     }
 
     if (action == "chain") {
-        trace_chain(chain);
+        if (follow) {
+            watch_chain(chain);
+        } else {
+            trace_chain(chain);
+        }
     } else if (action == "blob") {
-        trace_blob(chain, target_id);
+        trace_blob(chain, target_id, follow);
     } else if (action == "token") {
         trace_token(chain, target_id);
     } else if (action == "tx") {
