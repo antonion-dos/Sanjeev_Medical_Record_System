@@ -8,16 +8,16 @@ This document outlines the architecture, interaction patterns, and HTTP REST / B
 
 | Component | Subsystem | Responsibility | Status |
 | :--- | :--- | :--- | :---: |
-| **1. Binary Protocol** | `binary_buffer.hpp` | Endian-safe serialization/deserialization for canonical hashing | 🟡 In Progress |
-| **2. Core Data Structures** | `types.hpp`, `transaction.*`, `block.*` | Encrypted blobs, temporal tokens, audit records, blocks | 🟡 In Progress |
-| **3. Cryptographic Suite** | `crypto.*` | OpenSSL ECDSA (secp256k1/P-256), AES-256-GCM, ECDH key agreement | 🔴 Pending Refactor |
-| **4. Persistence Engine** | `storage.*` | Embedded SQLite storage for blocks, tokens, and lineage | 🔴 Pending |
-| **5. State & Lineage Machine**| `blockchain.*` | Temporal validity enforcement, mempool, provenance tracing | 🔴 Pending |
-| **6. PoA Consensus** | `consensus.*` | Institutional authority block signing and threshold verification | 🔴 Pending |
-| **7. Cross-Platform API Server**| `server.*` | REST JSON/Binary API over Winsock/POSIX sockets | 🔴 Pending |
-| **8. Node Daemon & Tests** | `main.cpp`, `tests/` | CLI daemon, automated unit and integration test suite | 🔴 Pending |
+| **1. Binary Protocol** | `binary_buffer.hpp` | Endian-safe serialization/deserialization for canonical hashing | 🟢 **Ready** |
+| **2. Core Data Structures** | `types.hpp`, `transaction.*`, `block.*` | Encrypted blobs, temporal tokens, audit records, Merkle tree | 🟢 **Ready** |
+| **3. Cryptographic Suite** | `crypto.*` | OpenSSL ECDSA (secp256k1/P-256), AES-256-GCM, ECDH key agreement | 🟡 In Progress (75%) |
+| **4. Persistence Engine** | `storage.*` | Embedded SQLite storage for blocks, tokens, and lineage | 🔴 Next Up |
+| **5. State & Lineage Machine**| `blockchain.*` | Temporal validity enforcement, mempool, provenance tracing | 🔴 Pending Update |
+| **6. PoA Consensus** | `consensus.*` | Institutional authority block signing and threshold verification | 🔴 Pending Update |
+| **7. Cross-Platform API Server**| `server.*` | REST JSON/Binary API over Winsock/POSIX sockets | 🔴 Pending Update |
+| **8. Node Daemon & Tests** | `main.cpp`, `tests/` | CLI daemon, automated unit and integration test suite | 🟡 In Progress |
 
-**Overall Completion Estimate:** ~20% (Core architecture and specs established; binary buffer and core data types in progress).
+**Overall Completion Estimate:** ~35% (Components 1 & 2 fully tested and verified; cryptographic primitives operational).
 
 ---
 
