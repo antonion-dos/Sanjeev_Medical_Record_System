@@ -4,7 +4,22 @@
 #include <string>
 #include <atomic>
 #include <thread>
-#include <functional>
+#include <map>
+
+#ifdef _WIN32
+  #include <winsock2.h>
+  #include <ws2tcpip.h>
+  using socket_t = SOCKET;
+  #define IS_INVALID_SOCKET(s) ((s) == INVALID_SOCKET)
+#else
+  #include <sys/socket.h>
+  #include <netinet/in.h>
+  #include <unistd.h>
+  using socket_t = int;
+  #define INVALID_SOCKET (-1)
+  #define IS_INVALID_SOCKET(s) ((s) < 0)
+  #define closesocket(s) close(s)
+#endif
 
 namespace Sanjeev {
 
@@ -33,10 +48,11 @@ public:
 
     void start();
     void stop();
+    bool is_running() const { return running_; }
 
 private:
     void run();
-    void handle_client(int client_fd);
+    void handle_client(socket_t client_fd);
 
     HttpResponse route_request(const HttpRequest& req);
     HttpRequest parse_request(const std::string& raw_request);
@@ -44,7 +60,7 @@ private:
 
     Blockchain& blockchain_;
     int port_;
-    int server_fd_ = -1;
+    socket_t server_fd_ = INVALID_SOCKET;
     std::atomic<bool> running_{false};
     std::thread server_thread_;
 

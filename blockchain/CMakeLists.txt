@@ -7,7 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Dependencies
 find_package(OpenSSL REQUIRED)
-set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(SQLite3 REQUIRED)
 find_package(Threads REQUIRED)
 
 include_directories(include)
@@ -18,6 +18,7 @@ add_library(sanjeev_core
     src/transaction.cpp
     src/block.cpp
     src/consensus.cpp
+    src/storage.cpp
     src/blockchain.cpp
     src/server.cpp
 )
@@ -26,7 +27,9 @@ target_link_libraries(sanjeev_core
     PUBLIC
     OpenSSL::SSL
     OpenSSL::Crypto
+    SQLite::SQLite3
     Threads::Threads
+    $<$<PLATFORM_ID:Windows>:ws2_32>
 )
 
 # Blockchain Node Executable
@@ -35,6 +38,15 @@ target_link_libraries(sanjeev_node PRIVATE sanjeev_core)
 
 # Tests
 enable_testing()
-add_executable(test_crypto tests/test_crypto.cpp)
-target_link_libraries(test_crypto PRIVATE sanjeev_core)
-add_test(NAME CryptoTests COMMAND test_crypto)
+
+add_executable(test_core_types tests/test_core_types.cpp)
+target_link_libraries(test_core_types PRIVATE sanjeev_core)
+add_test(NAME CoreTypesTests COMMAND test_core_types)
+
+add_executable(test_storage tests/test_storage.cpp)
+target_link_libraries(test_storage PRIVATE sanjeev_core)
+add_test(NAME StorageTests COMMAND test_storage)
+
+add_executable(test_blockchain tests/test_blockchain.cpp)
+target_link_libraries(test_blockchain PRIVATE sanjeev_core)
+add_test(NAME BlockchainTests COMMAND test_blockchain)
