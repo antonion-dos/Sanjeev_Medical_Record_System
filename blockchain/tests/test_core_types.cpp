@@ -1,5 +1,7 @@
 #include "binary_buffer.hpp"
 #include "types.hpp"
+#include "transaction.hpp"
+#include "block.hpp"
 #include <iostream>
 #include <cassert>
 #include <cstring>
@@ -121,12 +123,121 @@ void test_decryption_audit_payload() {
     std::cout << "[PASS] test_decryption_audit_payload" << std::endl;
 }
 
+void test_transaction() {
+    Transaction tx;
+    tx.version = 1;
+    tx.type = TxType::BLOB_STORE;
+    tx.timestamp = 1743510000;
+    tx.nonce = 42;
+    tx.sender.fill(0x11);
+    tx.required_signatures = 1;
+
+    EncryptedBlob blob;
+    blob.blob_id.fill(0xAA);
+    blob.previous_blob_id.fill(0x00);
+    blob.owner_address.fill(0x11);
+    blob.updater_address.fill(0x11);
+    blob.timestamp = 1743510000;
+    blob.iv = {1, 2, 3, 4};
+    blob.tag = {5, 6, 7, 8};
+    blob.data = {9, 10, 11, 12};
+    tx.payload = BlobStorePayload{blob};
+
+    SignatureEntry sig;
+    sig.signer_address.fill(0x11);
+    sig.public_key = {0x04, 0x01, 0x02};
+    sig.signature = {0x30, 0x44, 0x02, 0x20};
+    tx.signatures.push_back(sig);
+
+    Hash256 id1 = tx.calculate_id();
+    assert(!is_zero_hash(id1));
+
+    BinaryWriter w;
+    tx.serialize(w);
+
+    BinaryReader r(w.get_buffer());
+    Transaction rec = Transaction::deserialize(r);
+
+    assert(rec.version == tx.version);
+    assert(rec.type == tx.type);
+    assert(rec.timestamp == tx.timestamp);
+    assert(rec.nonce == tx.nonce);
+    assert(rec.sender == tx.sender);
+    assert(rec.required_signatures == tx.required_signatures);
+    assert(rec.calculate_id() == id1);
+    assert(rec.signatures.size() == 1);
+    assert(rec.signatures[0].signer_address == sig.signer_address);
+    assert(rec.signatures[0].signature == sig.signature);
+    assert(r.remaining() == 0);
+
+    std::cout << "[PASS] test_transaction" << std::endl;
+}
+
+void test_block_and_merkle() {
+    Block b;
+    b.header.version = 1;
+    b.header.index = 100;
+    b.header.timestamp = 1743511111;
+    b.header.prev_hash.fill(0x55);
+    b.header.authority_address.fill(0x99);
+    b.header.authority_name = "Ministry of Health";
+    b.header.authority_signature = {0x30, 0x45, 0x02, 0x21};
+
+    // Add 3 transactions
+    for (int i = 0; i < 3; ++i) {
+        Transaction tx;
+        tx.version = 1;
+        tx.type = TxType::DECRYPTION_AUDIT;
+        tx.timestamp = 1743510000 + i;
+        tx.nonce = i;
+        tx.sender.fill(static_cast<uint8_t>(i + 1));
+        
+        DecryptionAuditPayload p;
+        p.token_id.fill(0x10 + i);
+        p.blob_id.fill(0x20 + i);
+        p.accessor_address.fill(0x30 + i);
+        p.access_timestamp = 1743510000 + i;
+        tx.payload = p;
+        b.transactions.push_back(tx);
+    }
+
+    Hash256 root = b.compute_merkle_root();
+    assert(!is_zero_hash(root));
+    b.header.merkle_root = root;
+
+    Hash256 block_hash = b.calculate_hash();
+    assert(!is_zero_hash(block_hash));
+
+    BinaryWriter w;
+    b.serialize(w);
+
+    BinaryReader r(w.get_buffer());
+    Block rec = Block::deserialize(r);
+
+    assert(rec.header.version == b.header.version);
+    assert(rec.header.index == b.header.index);
+    assert(rec.header.timestamp == b.header.timestamp);
+    assert(rec.header.prev_hash == b.header.prev_hash);
+    assert(rec.header.merkle_root == root);
+    assert(rec.header.authority_address == b.header.authority_address);
+    assert(rec.header.authority_name == "Ministry of Health");
+    assert(rec.header.authority_signature == b.header.authority_signature);
+    assert(rec.calculate_hash() == block_hash);
+    assert(rec.compute_merkle_root() == root);
+    assert(rec.transactions.size() == 3);
+    assert(r.remaining() == 0);
+
+    std::cout << "[PASS] test_block_and_merkle" << std::endl;
+}
+
 int main() {
     std::cout << "Running Core Types & Binary Buffer unit tests..." << std::endl;
     test_binary_buffer();
     test_encrypted_blob();
     test_temporal_access_token();
     test_decryption_audit_payload();
+    test_transaction();
+    test_block_and_merkle();
     std::cout << "All core data structure tests passed successfully!" << std::endl;
     return 0;
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "types.hpp"
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -23,6 +24,8 @@ struct EncryptedData {
 class Crypto {
 public:
     // Hashing
+    static Hash256 sha256_digest(const uint8_t* data, size_t len);
+    static Hash256 sha256_digest(const std::vector<uint8_t>& data);
     static std::string sha256(const std::string& input);
     static std::string sha256_bytes(const std::vector<uint8_t>& input);
 

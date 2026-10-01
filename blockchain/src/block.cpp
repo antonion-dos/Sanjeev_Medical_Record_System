@@ -1,33 +1,52 @@
 #include "block.hpp"
 #include "crypto.hpp"
-#include "json_utils.hpp"
-
-#include <sstream>
+#include <vector>
 
 namespace Sanjeev {
 
-std::string Block::get_header_data() const {
-    std::ostringstream ss;
-    ss << index << ":"
-       << timestamp << ":"
-       << prev_hash << ":"
-       << merkle_root << ":"
-       << authority_address;
-    return ss.str();
+void BlockHeader::serialize_unsigned(BinaryWriter& w) const {
+    w.write_uint32(version);
+    w.write_uint64(index);
+    w.write_uint64(timestamp);
+    w.write_fixed_array(prev_hash);
+    w.write_fixed_array(merkle_root);
+    w.write_fixed_array(authority_address);
+    w.write_string(authority_name);
 }
 
-std::string Block::calculate_hash() const {
-    return Crypto::sha256(get_header_data());
+void BlockHeader::serialize(BinaryWriter& w) const {
+    serialize_unsigned(w);
+    w.write_var_bytes(authority_signature);
 }
 
-std::string Block::compute_merkle_root() const {
+BlockHeader BlockHeader::deserialize(BinaryReader& r) {
+    BlockHeader h;
+    h.version = r.read_uint32();
+    h.index = r.read_uint64();
+    h.timestamp = r.read_uint64();
+    h.prev_hash = r.read_fixed_array<32>();
+    h.merkle_root = r.read_fixed_array<32>();
+    h.authority_address = r.read_fixed_array<20>();
+    h.authority_name = r.read_string();
+    h.authority_signature = r.read_var_bytes();
+    return h;
+}
+
+Hash256 BlockHeader::calculate_hash() const {
+    BinaryWriter w;
+    serialize_unsigned(w);
+    return Crypto::sha256_digest(w.get_buffer());
+}
+
+Hash256 Block::compute_merkle_root() const {
     if (transactions.empty()) {
-        return Crypto::sha256("EMPTY_TREE");
+        return Hash256{};
     }
 
-    std::vector<std::string> current_level;
+    std::vector<Hash256> current_level;
+    current_level.reserve(transactions.size());
     for (const auto& tx : transactions) {
-        current_level.push_back(tx.tx_id.empty() ? tx.calculate_hash() : tx.tx_id);
+        current_level.push_back(tx.calculate_id());
     }
 
     while (current_level.size() > 1) {
@@ -35,71 +54,38 @@ std::string Block::compute_merkle_root() const {
             current_level.push_back(current_level.back());
         }
 
-        std::vector<std::string> next_level;
+        std::vector<Hash256> next_level;
+        next_level.reserve(current_level.size() / 2);
+
         for (size_t i = 0; i < current_level.size(); i += 2) {
-            std::string combined = current_level[i] + current_level[i + 1];
-            next_level.push_back(Crypto::sha256(combined));
+            uint8_t combined[64];
+            std::memcpy(combined, current_level[i].data(), 32);
+            std::memcpy(combined + 32, current_level[i + 1].data(), 32);
+            next_level.push_back(Crypto::sha256_digest(combined, 64));
         }
-        current_level = next_level;
+
+        current_level = std::move(next_level);
     }
 
     return current_level[0];
 }
 
-bool Block::sign_block(const std::string& private_key_pem, const std::string& public_key_pem, const std::string& name) {
-    merkle_root = compute_merkle_root();
-    authority_address = Crypto::derive_address(public_key_pem);
-    authority_name = name;
-    hash = calculate_hash();
-    authority_signature = Crypto::sign(private_key_pem, hash);
-    return !authority_signature.empty();
-}
-
-bool Block::verify_authority_signature(const std::string& public_key_pem) const {
-    std::string derived = Crypto::derive_address(public_key_pem);
-    if (derived != authority_address) return false;
-    std::string computed_hash = calculate_hash();
-    if (computed_hash != hash) return false;
-    return Crypto::verify(public_key_pem, computed_hash, authority_signature);
-}
-
-std::string Block::to_json() const {
-    JsonValue v = JsonValue::object();
-    v["index"] = static_cast<int64_t>(index);
-    v["timestamp"] = timestamp;
-    v["prev_hash"] = prev_hash;
-    v["merkle_root"] = merkle_root;
-    v["authority_address"] = authority_address;
-    v["authority_name"] = authority_name;
-    v["authority_signature"] = authority_signature;
-    v["hash"] = hash;
-
-    JsonValue txs = JsonValue::array();
+void Block::serialize(BinaryWriter& w) const {
+    header.serialize(w);
+    w.write_uint32(static_cast<uint32_t>(transactions.size()));
     for (const auto& tx : transactions) {
-        txs.push_back(JsonValue::parse(tx.to_json()));
+        tx.serialize(w);
     }
-    v["transactions"] = txs;
-
-    return v.dump();
 }
 
-Block Block::from_json(const std::string& json_str) {
-    JsonValue v = JsonValue::parse(json_str);
+Block Block::deserialize(BinaryReader& r) {
     Block b;
-    b.index = v["index"].as_uint64();
-    b.timestamp = v["timestamp"].as_uint64();
-    b.prev_hash = v["prev_hash"].as_string();
-    b.merkle_root = v["merkle_root"].as_string();
-    b.authority_address = v["authority_address"].as_string();
-    b.authority_name = v["authority_name"].as_string();
-    b.authority_signature = v["authority_signature"].as_string();
-    b.hash = v["hash"].as_string();
-
-    const JsonValue& txs = v["transactions"];
-    for (const auto& tv : txs.arr_val) {
-        b.transactions.push_back(Transaction::from_json(tv.dump()));
+    b.header = BlockHeader::deserialize(r);
+    uint32_t tx_count = r.read_uint32();
+    b.transactions.reserve(tx_count);
+    for (uint32_t i = 0; i < tx_count; ++i) {
+        b.transactions.push_back(Transaction::deserialize(r));
     }
-
     return b;
 }
 

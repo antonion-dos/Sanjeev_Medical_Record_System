@@ -7,28 +7,34 @@
 
 namespace Sanjeev {
 
-struct Block {
+struct BlockHeader {
+    uint32_t version = 1;
     uint64_t index = 0;
     uint64_t timestamp = 0;
-    std::string prev_hash;
-    std::string merkle_root;
+    Hash256 prev_hash{};
+    Hash256 merkle_root{};
+    Address authority_address{};
+    std::string authority_name;
+    std::vector<uint8_t> authority_signature;
+
+    void serialize_unsigned(BinaryWriter& w) const;
+    void serialize(BinaryWriter& w) const;
+    static BlockHeader deserialize(BinaryReader& r);
+
+    Hash256 calculate_hash() const;
+    std::string get_hash_hex() const { return hash_to_hex(calculate_hash()); }
+};
+
+struct Block {
+    BlockHeader header;
     std::vector<Transaction> transactions;
 
-    // Proof-of-Authority (PoA) validation fields
-    std::string authority_address;
-    std::string authority_name;
-    std::string authority_signature;
-    std::string hash;
+    Hash256 calculate_hash() const { return header.calculate_hash(); }
+    std::string get_hash_hex() const { return header.get_hash_hex(); }
+    Hash256 compute_merkle_root() const;
 
-    std::string get_header_data() const;
-    std::string calculate_hash() const;
-    std::string compute_merkle_root() const;
-
-    bool sign_block(const std::string& private_key_pem, const std::string& public_key_pem, const std::string& name);
-    bool verify_authority_signature(const std::string& public_key_pem) const;
-
-    std::string to_json() const;
-    static Block from_json(const std::string& json_str);
+    void serialize(BinaryWriter& w) const;
+    static Block deserialize(BinaryReader& r);
 };
 
 } // namespace Sanjeev
