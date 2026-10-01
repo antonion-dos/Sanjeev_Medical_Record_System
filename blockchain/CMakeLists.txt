@@ -58,3 +58,7 @@ add_test(NAME BlockchainTests COMMAND test_blockchain)
 add_executable(test_document_encryption tests/test_document_encryption.cpp)
 target_link_libraries(test_document_encryption PRIVATE sanjeev_core)
 add_test(NAME DocumentEncryptionTests COMMAND test_document_encryption)
+
+add_executable(test_document_update tests/test_document_update.cpp)
+target_link_libraries(test_document_update PRIVATE sanjeev_core)
+add_test(NAME DocumentUpdateTests COMMAND test_document_update)

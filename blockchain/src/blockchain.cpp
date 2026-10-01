@@ -72,6 +72,28 @@ bool Blockchain::add_transaction(const Transaction& tx) {
             std::cerr << "Delegated token cannot exceed parent expiration" << std::endl;
             return false;
         }
+    } else if (std::holds_alternative<BlobUpdatePayload>(tx.payload)) {
+        const auto& p = std::get<BlobUpdatePayload>(tx.payload);
+        auto prev_blob = storage_.get_blob(p.previous_blob_id);
+        if (!prev_blob) {
+            std::cerr << "Cannot update nonexistent previous blob: " << hash_to_hex(p.previous_blob_id) << std::endl;
+            return false;
+        }
+        // Verify updater is authorized: either the owner, or holds an active temporal token for this blob
+        bool authorized = (tx.sender == prev_blob->owner_address);
+        if (!authorized) {
+            auto active_tokens = storage_.get_active_tokens_for_recipient(tx.sender, tx.timestamp);
+            for (const auto& tok : active_tokens) {
+                if (tok.target_blob_id == p.previous_blob_id) {
+                    authorized = true;
+                    break;
+                }
+            }
+        }
+        if (!authorized) {
+            std::cerr << "Updater " << address_to_hex(tx.sender) << " is not authorized to update blob " << hash_to_hex(p.previous_blob_id) << std::endl;
+            return false;
+        }
     } else if (std::holds_alternative<TokenRevokePayload>(tx.payload)) {
         const auto& p = std::get<TokenRevokePayload>(tx.payload);
         auto target = storage_.get_token(p.target_token_id);
