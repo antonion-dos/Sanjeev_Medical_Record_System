@@ -1,9 +1,10 @@
 #include "consensus.hpp"
+#include "crypto.hpp"
 #include <iostream>
 
 namespace Sanjeev {
 
-void PoAConsensus::register_authority(const std::string& address, const std::string& name, const std::string& public_key_pem) {
+void PoAConsensus::register_authority(const Address& address, const std::string& name, const std::string& public_key_pem) {
     AuthorityNode node;
     node.address = address;
     node.name = name;
@@ -12,14 +13,14 @@ void PoAConsensus::register_authority(const std::string& address, const std::str
     authorities_[address] = node;
 }
 
-void PoAConsensus::revoke_authority(const std::string& address) {
+void PoAConsensus::revoke_authority(const Address& address) {
     auto it = authorities_.find(address);
     if (it != authorities_.end()) {
         it->second.is_active = false;
     }
 }
 
-bool PoAConsensus::is_authorized(const std::string& address) const {
+bool PoAConsensus::is_authorized(const Address& address) const {
     auto it = authorities_.find(address);
     if (it != authorities_.end()) {
         return it->second.is_active;
@@ -27,7 +28,7 @@ bool PoAConsensus::is_authorized(const std::string& address) const {
     return false;
 }
 
-const AuthorityNode* PoAConsensus::get_authority(const std::string& address) const {
+const AuthorityNode* PoAConsensus::get_authority(const Address& address) const {
     auto it = authorities_.find(address);
     if (it != authorities_.end()) {
         return &(it->second);
@@ -45,34 +46,52 @@ std::vector<AuthorityNode> PoAConsensus::get_all_authorities() const {
     return list;
 }
 
-bool PoAConsensus::validate_block_header(const Block& block, const Block* prev_block) const {
+bool PoAConsensus::sign_block(Block& block, const std::string& private_key_pem, const Address& authority_address, const std::string& authority_name) const {
+    block.header.authority_address = authority_address;
+    block.header.authority_name = authority_name;
+    block.header.merkle_root = block.compute_merkle_root();
+
+    Hash256 header_hash = block.header.calculate_hash();
+    try {
+        block.header.authority_signature = Crypto::sign_bytes(private_key_pem, header_hash.data(), header_hash.size());
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "PoA Error: failed to sign block: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool PoAConsensus::validate_block(const Block& block, const Block* prev_block) const {
     // 1. Check authority credentials
-    const AuthorityNode* auth = get_authority(block.authority_address);
+    const AuthorityNode* auth = get_authority(block.header.authority_address);
     if (!auth || !auth->is_active) {
-        std::cerr << "PoA Error: Authority address " << block.authority_address << " is not authorized!" << std::endl;
+        std::cerr << "PoA Error: Authority address " << address_to_hex(block.header.authority_address) << " is not authorized!" << std::endl;
         return false;
     }
 
-    // 2. Verify digital signature
-    if (!block.verify_authority_signature(auth->public_key_pem)) {
+    // 2. Verify digital signature over the block header
+    Hash256 header_hash = block.header.calculate_hash();
+    if (!Crypto::verify_bytes(auth->public_key_pem, header_hash.data(), header_hash.size(), block.header.authority_signature)) {
         std::cerr << "PoA Error: Block signature verification failed for authority " << auth->name << std::endl;
         return false;
     }
 
     // 3. Verify Merkle root matches transactions
-    if (block.merkle_root != block.compute_merkle_root()) {
-        std::cerr << "PoA Error: Merkle root mismatch in block #" << block.index << std::endl;
+    if (block.header.merkle_root != block.compute_merkle_root()) {
+        std::cerr << "PoA Error: Merkle root mismatch in block #" << block.header.index << std::endl;
         return false;
     }
 
-    // 4. If chained, verify linkage
+    // 4. Verify blockchain continuity
     if (prev_block != nullptr) {
-        if (block.index != prev_block->index + 1) {
-            std::cerr << "PoA Error: Non-sequential block index: expected " << (prev_block->index + 1) << ", got " << block.index << std::endl;
+        if (block.header.index != prev_block->header.index + 1) {
+            std::cerr << "PoA Error: Non-sequential block index: expected "
+                      << (prev_block->header.index + 1) << ", got " << block.header.index << std::endl;
             return false;
         }
-        if (block.prev_hash != prev_block->hash) {
-            std::cerr << "PoA Error: Prev hash mismatch: expected " << prev_block->hash << ", got " << block.prev_hash << std::endl;
+        if (block.header.prev_hash != prev_block->calculate_hash()) {
+            std::cerr << "PoA Error: Prev hash mismatch: expected "
+                      << prev_block->get_hash_hex() << ", got " << hash_to_hex(block.header.prev_hash) << std::endl;
             return false;
         }
     }
