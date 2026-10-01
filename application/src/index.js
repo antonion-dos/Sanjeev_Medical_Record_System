@@ -56,13 +56,13 @@ class SanjeevApp {
             </div>
           </a>
 
-          <!-- Role / Mode Switcher -->
+          <!-- Role / Mode Switcher: STRICTLY Patient Mode and Hospital Mode -->
           <nav class="mode-nav">
             <button class="mode-btn ${appState.currentMode === 'patient' ? 'active' : ''}" data-mode="patient">
               👤 Patient Mode
             </button>
             <button class="mode-btn ${appState.currentMode === 'hospital' ? 'active' : ''}" data-mode="hospital">
-              🏥 Hospital / Doctor Mode
+              🏥 Hospital Mode
             </button>
             <button class="mode-btn ${appState.currentMode === 'explorer' ? 'active' : ''}" data-mode="explorer">
               🌐 Birds-Eye Viewer
@@ -76,18 +76,12 @@ class SanjeevApp {
               <span id="node-status-text">Checking Node...</span>
             </div>
 
-            <select class="account-selector" id="account-dropdown" title="Simulated Wallet Identity">
+            <select class="account-selector" id="account-dropdown" title="Active Account">
               <option value="patient" ${appState.currentUser === DEMO_ACCOUNTS.patient ? 'selected' : ''}>
-                👤 Alice Sharma (Patient)
+                👤 Alice Sharma (Patient Account)
               </option>
               <option value="hospital" ${appState.currentUser === DEMO_ACCOUNTS.hospital ? 'selected' : ''}>
-                🏥 Apollo Hospital (Enterprise)
-              </option>
-              <option value="doctor_rajesh" ${appState.currentUser === DEMO_ACCOUNTS.doctor_rajesh ? 'selected' : ''}>
-                🩺 Dr. Rajesh Sharma (Doctor)
-              </option>
-              <option value="doctor_priya" ${appState.currentUser === DEMO_ACCOUNTS.doctor_priya ? 'selected' : ''}>
-                🩺 Dr. Priya Patel (Doctor)
+                🏥 Apollo Hospital (Hospital Account)
               </option>
             </select>
           </div>
