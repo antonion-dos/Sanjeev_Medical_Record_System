@@ -1,0 +1,22 @@
+{
+  "name": "sanjeev-application",
+  "version": "1.0.0",
+  "description": "Sanjeev Healthcare Portal: Patient, Hospital & Doctor modes with Temporal Key delegation, OpenRouter LLM Buddy, and Blockchain Viewer",
+  "main": "build.js",
+  "scripts": {
+    "build": "node build.js",
+    "start": "node build.js --serve 3000",
+    "dev": "node build.js --serve 3000 --watch",
+    "test": "node build.js --test"
+  },
+  "keywords": [
+    "blockchain",
+    "healthcare",
+    "ehr",
+    "temporal-keys",
+    "openrouter",
+    "medical-buddy"
+  ],
+  "author": "Sanjeev Medical System",
+  "license": "Apache-2.0"
+}
