@@ -9,6 +9,7 @@ import { PatientView } from './views/patient.js';
 import { HospitalView } from './views/hospital.js';
 import { ExplorerView } from './views/explorer.js';
 import { SettingsModal } from './views/settings-modal.js';
+import { AuthModal as SupabaseAuthModal } from './views/auth-modal.js';
 import { auth } from './services/auth.js';
 import { AuthModal } from './components/AuthModal.js';
 
@@ -261,7 +262,11 @@ class SanjeevApp {
       }
 
       if (e.target.closest('#btn-header-auth')) {
+<<<<<<< HEAD
         this.authModal.open();
+=======
+        SupabaseAuthModal.open();
+>>>>>>> origin/main
       }
     });
 

@@ -49,6 +49,9 @@ export const DEMO_ACCOUNTS = {
 };
 DEMO_ACCOUNTS.doctor = DEMO_ACCOUNTS.doctor_rajesh;
 
+DEMO_ACCOUNTS.doctor_rajesh = DEMO_ACCOUNTS.hospital.doctors[0];
+DEMO_ACCOUNTS.doctor_priya = DEMO_ACCOUNTS.hospital.doctors[1];
+
 class StateService {
   constructor() {
     this.subscribers = [];
