@@ -173,11 +173,16 @@ Sanjeev provides two complementary interfaces for auditing and tracing transacti
 
 The `sanjeev_trace` binary allows administrators, auditors, and patients to directly query the local or node SQLite ledger without external dependencies.
 
-#### A. View Full Ledger Chain & Transaction Overview
+#### A. Trace Complete Block Ledger & Live Real-Time Follow
+Inspects all sealed blocks, authorities, and transactions:
 ```bash
 ./build/sanjeev_trace --chain --db sanjeev_node.db
 ```
-**Sample Output:**
+To stream newly sealed blocks, transaction updates, and on-chain decryption audit receipts **in real time**:
+```bash
+./build/sanjeev_trace --chain --db sanjeev_node.db --follow
+```
+**Sample Real-Time Live Stream:**
 ```text
 ===============================================================
    Sanjeev (संजीव) - Blockchain Transaction & Lineage Tracer   
@@ -186,46 +191,75 @@ The `sanjeev_trace` binary allows administrators, auditors, and patients to dire
 [Ledger Summary]
   Total Blocks: 2
 ---------------------------------------------------------------
-Block #  0 | Hash: 0xeeb374a5b9a1c2... | TxCount:  0 | Authority: Ministry of Health | Time: 1790837750
-Block #  1 | Hash: 0xb1243c9d4c320e... | TxCount:  2 | Authority: Ministry of Health | Time: 1790837750
-   └─ [Tx BLOB_STORE]  ID: 0x039d9ec037b969... Sender: 0x65c5d8f342...
-   └─ [Tx TOKEN_GRANT] ID: 0xb187f14500b316... Sender: 0x65c5d8f342...
+Block #  0 | Hash: 0x28023b04a7c803... | TxCount:  0 | Authority: Ministry of Health | Time: 1790838779
+Block #  1 | Hash: 0xfb60bc638897b7... | TxCount:  2 | Authority: Ministry of Health | Time: 1790838779
+   └─ [Tx BLOB_STORE]  ID: 0x09b66b69fee96d... | Sender: 0xba5c4622f65c...
+   └─ [Tx TOKEN_GRANT] ID: 0xb680d4c6239c8c... | Sender: 0xba5c4622f65c...
+---------------------------------------------------------------
+
+[*] Watching ledger in REAL-TIME for new blocks, transactions, and audit receipts...
+    (Press Ctrl+C to stop realtime tracer)
+
+>>> [REAL-TIME LEDGER EVENT] New Block Sealed! <<<
+  Block #2 | Hash: 0xed27d612192ad0bc753a1b0ff531616cb64baf08473227dd44ef43d713e634f1
+  Authority: Government Ministry of Health - Authority Validator #1
+  Transactions (1):
+    └─ [Tx DECRYPTION_AUDIT] ID: 0x7af4d07b37246f... | Sender: 0x00267b5fefb3...
+      • [DECRYPTION AUDIT] Accessor: 0x00267b5fefb3...
+      • Accessed Blob: 0xc7d00c427df03fe694...
+      • Token Used: 0x7a7a7a7a7a7a7a7a7a...
 ---------------------------------------------------------------
 ```
 
 #### B. Trace Document Revision Provenance & Access Audit Receipts
 Inspects a specific encrypted medical record to display its complete version history and every time an authorized party requested decryption:
 ```bash
-./build/sanjeev_trace --blob 0x039d9ec037b96942... --db sanjeev_node.db
+./build/sanjeev_trace --blob 0x05a2e10f1e4575b28476... --db sanjeev_node.db
+```
+Or stream document access events live:
+```bash
+./build/sanjeev_trace --blob 0x05a2e10f1e4575b28476... --db sanjeev_node.db --follow
 ```
 **Sample Output:**
 ```text
 [Target Encrypted Blob Details]
-  Blob ID        : 0x039d9ec037b96942...
-  Previous Version: None (Genesis Version)
-  Owner Address  : 0x65c5d8f342b30b42fcf023d6...
-  Updater Address: 0x65c5d8f342b30b42fcf023d6...
-  Ciphertext Size: 1048 bytes
-  IV (Hex)       : a1b2c3d4e5f60718293a4b5c
-  Auth Tag (Hex) : 9f8e7d6c5b4a39281726354455667788
-  Timestamp      : 1790837750
+  Blob ID        : 0x05a2e10f1e4575b28476c57ed49be5199ef406f76a549129cc4d49b613802b6f
+  Previous Version: 0x3c2685c4bd85b1473eb5830d0f0dd9e59a543ac33da67d0bfb5f96c05ae525e6
+  Owner Address  : 0x1122334455667788990011223344556677889900
+  Updater Address: 0xa6d8eeb46acc53ff5eb04dbfd4d8e81d8a5fa65c
+  Ciphertext Size: 155 bytes
+  IV (Hex)       : aabbccddeeff001122334455
+  Auth Tag (Hex) : 99887766554433221100ffeeddccbbaa
+  Timestamp      : 1790839053
 
---- Version Provenance Chain (1 revisions) ---
-  v1: 0x039d9ec037b96942... (Updated by: 0x65c5d8f342... at t=1790837750)
+--- Version Provenance Chain (2 revisions) ---
+  v2: 0x05a2e10f1e4575b28476c57ed49be5199ef406f76a549129cc4d49b613802b6f (Updated by: 0xa6d8eeb46acc... at t=1790839053)
+  v1: 0x3c2685c4bd85b1473eb5830d0f0dd9e59a543ac33da67d0bfb5f96c05ae525e6 (Updated by: 0x112233445566... at t=1790838996)
 
 --- On-Chain Decryption Audit Receipts (1 access events) ---
-  [ACCESS EVENT] Accessor: 0x47e19f2a08... | Token: 0xb187f14500b316... | Time: 1790838100
+  [ACCESS EVENT] Accessor: 0xa6d8eeb46acc53ff5eb04dbfd4d8e81d8a5fa65c | Token: 0x88888888888888... | Time: 1790835000
 ```
 
 #### C. Trace Temporal Access Token Status & Delegation
 Inspects the cryptographic validity window and delegation parent for a token:
 ```bash
-./build/sanjeev_trace --token 0xb187f14500b31671... --db sanjeev_node.db
+./build/sanjeev_trace --token 0x8888888888888888888888888888888888888888888888888888888888888888 --db sanjeev_node.db
+```
+**Sample Output:**
+```text
+[Temporal Access Token Information]
+  Token ID       : 0x8888888888888888888888888888888888888888888888888888888888888888
+  Target Blob ID : 0x3c2685c4bd85b1473eb5830d0f0dd9e59a543ac33da67d0bfb5f96c05ae525e6
+  Grantor (Owner): 0x1122334455667788990011223344556677889900
+  Recipient      : 0xa6d8eeb46acc53ff5eb04dbfd4d8e81d8a5fa65c
+  Valid Window   : 1790830000 -> 1790930000
+  Delegation Parent: Root Grant (Direct from Patient)
+  Status Code    : 2 (REVOKED)
 ```
 
 #### D. Inspect Specific Transaction Payload
 ```bash
-./build/sanjeev_trace --tx 0x039d9ec037b96942... --db sanjeev_node.db
+./build/sanjeev_trace --tx 0x2d6084df39ed1734100901e956ce2c2b6589725c37dfaa1a853fb3f4afc32de2 --db sanjeev_node.db
 ```
 
 ---

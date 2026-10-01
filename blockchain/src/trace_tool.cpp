@@ -225,6 +225,7 @@ void trace_tx(Blockchain& chain, const std::string& tx_hex) {
 }
 
 int main(int argc, char* argv[]) {
+    std::cout.setf(std::ios::unitbuf);
     std::signal(SIGINT, tracer_sig_handler);
     std::signal(SIGTERM, tracer_sig_handler);
 
