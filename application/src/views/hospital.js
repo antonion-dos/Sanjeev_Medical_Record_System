@@ -289,6 +289,9 @@ export class HospitalView {
         try { docPayload = JSON.parse(targetRec.payload); } catch {}
 
         try {
+          if (await api.checkConnection()) {
+            await api.requestDecryption(keyId, user.address);
+          }
           const symKeyHex = keyPayload.authorized_document_sym_key_hex || docPayload.document_sym_key_hex;
           const key = await ClientCrypto.importKeyHex(symKeyHex);
           const decrypted = await ClientCrypto.decrypt(docPayload, key);

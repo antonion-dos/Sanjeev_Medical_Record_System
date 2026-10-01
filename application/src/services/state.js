@@ -37,8 +37,17 @@ export const DEMO_ACCOUNTS = {
     name: 'Ministry of Health & Family Welfare',
     role: 'authority',
     desc: 'Institutional PoA Validator'
+  },
+  doctor_rajesh: {
+    id: 'doc-1',
+    name: 'Dr. Rajesh Sharma, MD',
+    specialty: 'Cardiology Specialist',
+    address: '0x38AF44cE15993a4dB2e9575fDb2b28F10815B452',
+    role: 'doctor',
+    activeCases: 1
   }
 };
+DEMO_ACCOUNTS.doctor = DEMO_ACCOUNTS.doctor_rajesh;
 
 class StateService {
   constructor() {

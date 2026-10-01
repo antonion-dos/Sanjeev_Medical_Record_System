@@ -105,10 +105,38 @@ export class ClientCrypto {
   }
 
   /**
-   * Generates a deterministic or random demo Ethereum-style address
+   * Converts a Base64 string to a lowercase hexadecimal string
    */
-  static generateAddress(prefix = '0x') {
-    const bytes = window.crypto.getRandomValues(new Uint8Array(20));
-    return prefix + Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+  static base64ToHex(b64) {
+    if (!b64) return '';
+    try {
+      const raw = atob(b64);
+      let hex = '';
+      for (let i = 0; i < raw.length; i++) {
+        hex += raw.charCodeAt(i).toString(16).padStart(2, '0');
+      }
+      return hex;
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * Converts a hexadecimal string to a Base64 string
+   */
+  static hexToBase64(hex) {
+    if (!hex) return '';
+    try {
+      const cleanHex = hex.startsWith('0x') ? hex.slice(2) : hex;
+      const bytes = new Uint8Array(cleanHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      return btoa(binary);
+    } catch {
+      return '';
+    }
   }
 }
+
