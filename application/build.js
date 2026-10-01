@@ -72,13 +72,201 @@ function build() {
   console.log(`[Build] Done in ${duration}ms. Distribution generated at: ${DIST_DIR}`);
 }
 
+let DatabaseSync = null;
+try {
+  DatabaseSync = require('node:sqlite').DatabaseSync;
+} catch (e) {
+  DatabaseSync = null;
+}
+
+const DB_PATH = path.resolve(ROOT_DIR, '../blockchain/sanjeev_live.db');
+const ENTITIES_FILE = path.join(ROOT_DIR, 'entities.json');
+
+function loadRegisteredEntities() {
+  if (fs.existsSync(ENTITIES_FILE)) {
+    try {
+      return JSON.parse(fs.readFileSync(ENTITIES_FILE, 'utf-8'));
+    } catch (e) {
+      return [];
+    }
+  }
+  return [];
+}
+
+function saveRegisteredEntities(entities) {
+  try {
+    fs.writeFileSync(ENTITIES_FILE, JSON.stringify(entities, null, 2), 'utf-8');
+  } catch (e) {
+    console.error('Failed to save entities:', e);
+  }
+}
+
+function postToBlockchainNode(pathname, data) {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify(data);
+    const req = http.request({
+      hostname: 'localhost',
+      port: 8080,
+      path: pathname,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload)
+      }
+    }, (res) => {
+      let body = '';
+      res.on('data', chunk => body += chunk);
+      res.on('end', () => {
+        try {
+          resolve({ status: res.statusCode, data: JSON.parse(body || '{}') });
+        } catch {
+          resolve({ status: res.statusCode, data: body });
+        }
+      });
+    });
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
+async function processExternalEntity(payload) {
+  const now = Math.floor(Date.now() / 1000);
+  const crypto = require('crypto');
+
+  const patientName = payload.patient_name || 'Vikram Malhotra';
+  const patientAddress = (payload.patient_address || '0x4a9b6c7d8e1234567890abcdef1234567890abcd').toLowerCase();
+  
+  const hospitalName = payload.hospital_name || 'Max Super Speciality Hospital';
+  const hospitalAddress = (payload.hospital_address || '0x5b8c7d8e9f2345678901bcdef12345678901bcde').toLowerCase();
+
+  const doctorName = payload.doctor_name || 'Dr. Ananya Roy, MD';
+  const doctorSpecialty = payload.doctor_specialty || 'Senior Neurosurgeon';
+  const doctorAddress = (payload.doctor_address || '0x6c9d8e9fa03456789012cdef123456789012cdef').toLowerCase();
+
+  const recordTitle = payload.record_title || 'Neurological Evaluation & Brain MRI Scan';
+  const department = payload.department || 'Neurology';
+  const durationHours = parseInt(payload.duration_hours, 10) || 24;
+
+  const blobId = '0x' + crypto.randomBytes(32).toString('hex');
+  const tokenId = '0x' + crypto.randomBytes(32).toString('hex');
+  const symKeyHex = crypto.randomBytes(32).toString('hex');
+  const ivHex = crypto.randomBytes(12).toString('hex');
+  const tagHex = crypto.randomBytes(16).toString('hex');
+  const samplePlaintext = JSON.stringify({
+    title: recordTitle,
+    patient_name: patientName,
+    department: department,
+    hospital: hospitalName,
+    attending_doctor: doctorName,
+    timestamp: now,
+    status: 'Verified Sovereign Record'
+  });
+  const dataB64 = Buffer.from(samplePlaintext).toString('base64');
+
+  // 1. Submit BLOB_STORE to C++ Node
+  const blobRes = await postToBlockchainNode('/api/v1/blob/store', {
+    sender: patientAddress,
+    nonce: Date.now(),
+    payload: {
+      blob_id: blobId,
+      previous_blob_id: '0x0000000000000000000000000000000000000000000000000000000000000000',
+      owner_address: patientAddress,
+      iv_hex: ivHex,
+      tag_hex: tagHex,
+      data_b64: dataB64
+    }
+  });
+
+  // 2. Mine block to seal blob
+  const mineRes1 = await postToBlockchainNode('/api/v1/node/mine', {});
+
+  // 3. Submit TOKEN_GRANT from Patient to Hospital
+  const grantRes = await postToBlockchainNode('/api/v1/token/grant', {
+    sender: patientAddress,
+    nonce: Date.now() + 1,
+    payload: {
+      token_id: tokenId,
+      target_blob_id: blobId,
+      grantor_address: patientAddress,
+      recipient_address: hospitalAddress,
+      valid_from: now,
+      valid_until: now + (durationHours * 3600),
+      encrypted_symkey_hex: symKeyHex
+    }
+  });
+
+  // 4. Mine block to seal token grant
+  const mineRes2 = await postToBlockchainNode('/api/v1/node/mine', {});
+
+  // 5. Doctor performs Decryption Audit
+  const auditRes = await postToBlockchainNode('/api/v1/token/audit_decrypt', {
+    token_id: tokenId,
+    accessor_address: hospitalAddress,
+    timestamp: now
+  });
+
+  // 6. Mine block to seal audit
+  const mineRes3 = await postToBlockchainNode('/api/v1/node/mine', {});
+
+  // 7. Save Entity Metadata
+  const entities = loadRegisteredEntities();
+  const entityRecord = {
+    id: 'ent-' + Date.now(),
+    timestamp: now,
+    patient: {
+      name: patientName,
+      address: patientAddress,
+      role: 'patient'
+    },
+    hospital: {
+      name: hospitalName,
+      address: hospitalAddress,
+      role: 'hospital'
+    },
+    doctor: {
+      name: doctorName,
+      specialty: doctorSpecialty,
+      address: doctorAddress,
+      role: 'doctor'
+    },
+    record: {
+      title: recordTitle,
+      department: department,
+      blob_id: blobId
+    },
+    token: {
+      token_id: tokenId,
+      valid_from: now,
+      valid_until: now + (durationHours * 3600),
+      duration_hours: durationHours,
+      sym_key_hex: symKeyHex
+    }
+  };
+  entities.push(entityRecord);
+  saveRegisteredEntities(entities);
+
+  return {
+    success: true,
+    message: 'New Patient -> Hospital -> Doctor entity committed to blockchain and registered in app.',
+    entity: entityRecord,
+    onchain: {
+      blob_tx: blobRes.data,
+      grant_tx: grantRes.data,
+      audit: auditRes.data,
+      latest_block: mineRes3.data
+    }
+  };
+}
+
 function serve(port = 3000) {
   build();
 
   const server = http.createServer((req, res) => {
     // Enable CORS
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
@@ -86,7 +274,61 @@ function serve(port = 3000) {
       return;
     }
 
-    let reqPath = decodeURI(req.url.split('?')[0]);
+    const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    const pathname = parsedUrl.pathname;
+
+    // 1. GET /api/ledger/sync
+    if (req.method === 'GET' && pathname === '/api/ledger/sync') {
+      let blocks = [];
+      let blobs = [];
+      let tokens = [];
+      let audits = [];
+
+      if (DatabaseSync && fs.existsSync(DB_PATH)) {
+        try {
+          const db = new DatabaseSync(DB_PATH, { readOnly: true });
+          blocks = db.prepare('SELECT block_index, block_hash, prev_hash, merkle_root, timestamp, authority_name, tx_count FROM blocks ORDER BY block_index ASC').all();
+          blobs = db.prepare('SELECT blob_id, previous_blob_id, owner_address, updater_address, timestamp FROM blobs').all();
+          tokens = db.prepare('SELECT token_id, target_blob_id, grantor_address, recipient_address, valid_from, valid_until, parent_token_id, status, block_index FROM temporal_tokens').all();
+          audits = db.prepare('SELECT id, token_id, blob_id, accessor_address, access_timestamp, block_index FROM decryption_audits').all();
+        } catch (err) {
+          console.warn('SQLite ledger read error:', err.message);
+        }
+      }
+
+      const entities = loadRegisteredEntities();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ blocks, blobs, tokens, audits, entities }));
+      return;
+    }
+
+    // 2. GET /api/external/entities
+    if (req.method === 'GET' && pathname === '/api/external/entities') {
+      const entities = loadRegisteredEntities();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(entities));
+      return;
+    }
+
+    // 3. POST /api/external/entity
+    if (req.method === 'POST' && (pathname === '/api/external/entity' || pathname === '/api/v1/external/entity')) {
+      let bodyData = '';
+      req.on('data', chunk => bodyData += chunk);
+      req.on('end', async () => {
+        try {
+          const payload = JSON.parse(bodyData || '{}');
+          const result = await processExternalEntity(payload);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(result));
+        } catch (err) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
+    let reqPath = decodeURI(pathname);
     if (reqPath === '/' || reqPath === '') {
       reqPath = '/index.html';
     }

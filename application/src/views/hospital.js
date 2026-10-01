@@ -22,6 +22,27 @@ export class HospitalView {
     const isHospitalOrg = user.role === 'hospital';
     const now = Math.floor(Date.now() / 1000);
 
+    // Sync external entities if available
+    try {
+      const syncRes = await fetch('/api/ledger/sync');
+      if (syncRes.ok) {
+        const syncData = await syncRes.json();
+        if (Array.isArray(syncData.entities)) {
+          for (const ent of syncData.entities) {
+            if (ent.doctor && !appState.hospitalDoctors.some(d => d.address.toLowerCase() === ent.doctor.address.toLowerCase())) {
+              appState.hospitalDoctors.push({
+                id: 'doc-' + ent.doctor.address.substring(2, 8),
+                name: ent.doctor.name,
+                specialty: ent.doctor.specialty || 'Specialist Physician',
+                address: ent.doctor.address,
+                activeCases: 1
+              });
+            }
+          }
+        }
+      }
+    } catch (e) {}
+
     const allKeys = appState.temporalKeys;
     // Keys relevant to this account (either recipient or sender)
     const myKeys = allKeys.filter(k => 

@@ -1,0 +1,34 @@
+[
+  {
+    "id": "ent-1790843138728",
+    "timestamp": 1790843138,
+    "patient": {
+      "name": "Vikram Malhotra",
+      "address": "0x4a9b6c7d8e1234567890abcdef1234567890abcd",
+      "role": "patient"
+    },
+    "hospital": {
+      "name": "Max Super Speciality Hospital",
+      "address": "0x5b8c7d8e9f2345678901bcdef12345678901bcde",
+      "role": "hospital"
+    },
+    "doctor": {
+      "name": "Dr. Ananya Roy, MD",
+      "specialty": "Senior Neurosurgeon",
+      "address": "0x6c9d8e9fa03456789012cdef123456789012cdef",
+      "role": "doctor"
+    },
+    "record": {
+      "title": "Brain MRI Scan & Neurological Assessment",
+      "department": "Neurology & Neurosurgery",
+      "blob_id": "0x4f11977cce5f0d82df58188065bbb2121b78bc3c5831f39eb26df07baad8ffc8"
+    },
+    "token": {
+      "token_id": "0x64d13b0f5cb08aa2824623a7059c65f7723d9ac240208a125ddaad363bafb09d",
+      "valid_from": 1790843138,
+      "valid_until": 1791015938,
+      "duration_hours": 48,
+      "sym_key_hex": "325cd4039936e48b14cc0f6efb4cba12ed63478f9f779c65ff880af0803de6a9"
+    }
+  }
+]

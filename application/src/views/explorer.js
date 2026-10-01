@@ -185,26 +185,23 @@ export class ExplorerView {
   }
 
   renderSvgGraph(data) {
-    const keys = data.temporal_keys || [];
+    const chains = (data.lineage_graph && data.lineage_graph.chains && data.lineage_graph.chains.length > 0)
+      ? data.lineage_graph.chains
+      : [
+          {
+            patient: { name: 'Alice Sharma', role: 'Patient', address: DEMO_ACCOUNTS.patient.address, label: 'Patient Alice (Owner)' },
+            hospital: { name: 'Apollo City Hospital', role: 'Hospital', address: DEMO_ACCOUNTS.hospital.address, label: 'Apollo Hospital (Facility)' },
+            doctor: { name: 'Dr. Rajesh Sharma, MD', role: 'Doctor', address: DEMO_ACCOUNTS.doctor_rajesh.address, label: 'Dr. Rajesh Sharma (Specialist)' },
+            grantActive: true,
+            delActive: true,
+            grantLabel: '⏱️ Master Grant (24h Limit)',
+            delLabel: '➡️ Sub-Delegated (12h Limit)'
+          }
+        ];
+
     const width = 1100;
-    const height = 460;
-
-    // Identify roles of addresses
-    const patientAddr = DEMO_ACCOUNTS.patient.address;
-    const hospitalAddr = DEMO_ACCOUNTS.hospital.address;
-    const doctorAddr = DEMO_ACCOUNTS.doctor_rajesh.address;
-
-    // Fixed coordinates for clean layout
-    const patientPos = { x: 180, y: 220, label: 'Patient Alice (Owner)', role: 'Patient', color: '#38bdf8' };
-    const hospitalPos = { x: 550, y: 150, label: 'Apollo Hospital (Facility)', role: 'Hospital', color: '#f59e0b' };
-    const doctorPos = { x: 920, y: 260, label: 'Dr. Rajesh Sharma (Specialist)', role: 'Doctor', color: '#10b981' };
-
-    // Find links
-    const grant = keys.find(k => k.type === 'TEMPORAL_KEY_GRANT');
-    const delegation = keys.find(k => k.type === 'TEMPORAL_KEY_DELEGATE');
-
-    const grantActive = grant ? grant.is_active : true;
-    const delActive = delegation ? delegation.is_active : true;
+    const rowHeight = 230;
+    const height = Math.max(460, chains.length * rowHeight + 40);
 
     return `
       <svg class="svg-graph" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
@@ -235,60 +232,81 @@ export class ExplorerView {
         </pattern>
         <rect width="100%" height="100%" fill="url(#grid)" />
 
-        <!-- Line 1: Patient -> Hospital -->
-        <path d="M ${patientPos.x} ${patientPos.y} Q 365 140 ${hospitalPos.x} ${hospitalPos.y}" 
-              fill="none" 
-              stroke="${grantActive ? 'url(#flow-active)' : '#ef4444'}" 
-              stroke-width="${grantActive ? 3.5 : 2}" 
-              stroke-dasharray="${grantActive ? 'none' : '6,6'}"
-              marker-end="url(#${grantActive ? 'arrow-grant' : 'arrow-expired'})" />
+        ${chains.map((chain, idx) => {
+          const cy = 130 + idx * rowHeight;
+          const patientPos = { x: 180, y: cy + 10 };
+          const hospitalPos = { x: 550, y: cy - 25 };
+          const doctorPos = { x: 920, y: cy + 15 };
+          const pAddr = chain.patient.address || '';
+          const hAddr = chain.hospital.address || '';
+          const dAddr = chain.doctor.address || '';
 
-        <!-- Line 1 Label (Grant Badge) -->
-        <rect x="290" y="145" width="165" height="32" rx="6" fill="#111827" stroke="${grantActive ? '#f59e0b' : '#ef4444'}" stroke-width="1.5"/>
-        <text x="372" y="165" fill="#f8fafc" font-size="11" font-weight="600" text-anchor="middle" font-family="system-ui">
-          ${grantActive ? '⏱️ Master Grant (24h Limit)' : '❌ Key Expired / Revoked'}
-        </text>
+          return `
+            <!-- Chain #${idx + 1} Container -->
+            <g class="lineage-chain" data-chain="${idx}">
+              ${idx > 0 ? `
+                <line x1="80" y1="${cy - 95}" x2="1020" y2="${cy - 95}" stroke="#334155" stroke-dasharray="4,4" stroke-width="1.5" />
+                <rect x="470" y="${cy - 105}" width="160" height="22" rx="11" fill="#1e293b" stroke="#38bdf8" stroke-width="1" />
+                <text x="550" y="${cy - 90}" fill="#38bdf8" font-size="10" font-weight="700" text-anchor="middle" font-family="system-ui">ENTITY PIPELINE #${idx + 1}</text>
+              ` : ''}
 
-        <!-- Line 2: Hospital -> Doctor (Delegation) -->
-        <path d="M ${hospitalPos.x} ${hospitalPos.y} Q 735 170 ${doctorPos.x} ${doctorPos.y}" 
-              fill="none" 
-              stroke="${delActive ? 'url(#flow-del)' : '#ef4444'}" 
-              stroke-width="${delActive ? 3.5 : 2}" 
-              stroke-dasharray="${delActive ? 'none' : '6,6'}"
-              marker-end="url(#${delActive ? 'arrow-active' : 'arrow-expired'})" />
+              <!-- Flow 1: Patient -> Hospital -->
+              <path d="M ${patientPos.x} ${patientPos.y} Q 365 ${cy - 35} ${hospitalPos.x} ${hospitalPos.y}" 
+                    fill="none" 
+                    stroke="${chain.grantActive ? 'url(#flow-active)' : '#ef4444'}" 
+                    stroke-width="${chain.grantActive ? 3.5 : 2}" 
+                    stroke-dasharray="${chain.grantActive ? 'none' : '6,6'}"
+                    marker-end="url(#${chain.grantActive ? 'arrow-grant' : 'arrow-expired'})" />
 
-        <!-- Line 2 Label (Delegation Badge) -->
-        <rect x="660" y="170" width="160" height="32" rx="6" fill="#111827" stroke="${delActive ? '#10b981' : '#ef4444'}" stroke-width="1.5"/>
-        <text x="740" y="190" fill="#f8fafc" font-size="11" font-weight="600" text-anchor="middle" font-family="system-ui">
-          ${delActive ? '➡️ Sub-Delegated (12h Limit)' : '❌ Sub-Key Expired'}
-        </text>
+              <!-- Label 1 -->
+              <rect x="270" y="${cy - 35}" width="190" height="30" rx="6" fill="#111827" stroke="${chain.grantActive ? '#f59e0b' : '#ef4444'}" stroke-width="1.5"/>
+              <text x="365" y="${cy - 15}" fill="#f8fafc" font-size="11" font-weight="600" text-anchor="middle" font-family="system-ui">
+                ${chain.grantLabel || '⏱️ Master Grant (24h Limit)'}
+              </text>
 
-        <!-- Node 1: Patient Alice -->
-        <g transform="translate(${patientPos.x}, ${patientPos.y})">
-          <circle r="42" fill="#111827" stroke="#38bdf8" stroke-width="3" filter="drop-shadow(0 0 12px rgba(56,189,248,0.4))"/>
-          <text y="-8" fill="#38bdf8" font-size="20" text-anchor="middle">👤</text>
-          <text y="14" fill="#f8fafc" font-size="11" font-weight="700" text-anchor="middle" font-family="system-ui">Patient</text>
-          <text y="62" fill="#38bdf8" font-size="13" font-weight="700" text-anchor="middle" font-family="system-ui">${patientPos.label}</text>
-          <text y="78" fill="#94a3b8" font-size="10" font-family="monospace" text-anchor="middle">${patientAddr.substring(0, 16)}...</text>
-        </g>
+              <!-- Flow 2: Hospital -> Doctor -->
+              <path d="M ${hospitalPos.x} ${hospitalPos.y} Q 735 ${cy - 5} ${doctorPos.x} ${doctorPos.y}" 
+                    fill="none" 
+                    stroke="${chain.delActive ? 'url(#flow-del)' : '#ef4444'}" 
+                    stroke-width="${chain.delActive ? 3.5 : 2}" 
+                    stroke-dasharray="${chain.delActive ? 'none' : '6,6'}"
+                    marker-end="url(#${chain.delActive ? 'arrow-active' : 'arrow-expired'})" />
 
-        <!-- Node 2: Hospital Apollo -->
-        <g transform="translate(${hospitalPos.x}, ${hospitalPos.y})">
-          <circle r="46" fill="#111827" stroke="#f59e0b" stroke-width="3" filter="drop-shadow(0 0 12px rgba(245,158,11,0.4))"/>
-          <text y="-10" fill="#f59e0b" font-size="24" text-anchor="middle">🏥</text>
-          <text y="14" fill="#f8fafc" font-size="11" font-weight="700" text-anchor="middle" font-family="system-ui">Hospital</text>
-          <text y="66" fill="#f59e0b" font-size="13" font-weight="700" text-anchor="middle" font-family="system-ui">${hospitalPos.label}</text>
-          <text y="82" fill="#94a3b8" font-size="10" font-family="monospace" text-anchor="middle">${hospitalAddr.substring(0, 16)}...</text>
-        </g>
+              <!-- Label 2 -->
+              <rect x="640" y="${cy - 10}" width="190" height="30" rx="6" fill="#111827" stroke="${chain.delActive ? '#10b981' : '#ef4444'}" stroke-width="1.5"/>
+              <text x="735" y="${cy + 10}" fill="#f8fafc" font-size="11" font-weight="600" text-anchor="middle" font-family="system-ui">
+                ${chain.delLabel || '➡️ Sub-Delegated (12h Limit)'}
+              </text>
 
-        <!-- Node 3: Doctor Rajesh -->
-        <g transform="translate(${doctorPos.x}, ${doctorPos.y})">
-          <circle r="42" fill="#111827" stroke="#10b981" stroke-width="3" filter="drop-shadow(0 0 12px rgba(16,185,129,0.4))"/>
-          <text y="-8" fill="#10b981" font-size="20" text-anchor="middle">🩺</text>
-          <text y="14" fill="#f8fafc" font-size="11" font-weight="700" text-anchor="middle" font-family="system-ui">Doctor</text>
-          <text y="62" fill="#10b981" font-size="13" font-weight="700" text-anchor="middle" font-family="system-ui">${doctorPos.label}</text>
-          <text y="78" fill="#94a3b8" font-size="10" font-family="monospace" text-anchor="middle">${doctorAddr.substring(0, 16)}...</text>
-        </g>
+              <!-- Node 1: Patient -->
+              <g transform="translate(${patientPos.x}, ${patientPos.y})">
+                <circle r="40" fill="#111827" stroke="#38bdf8" stroke-width="3" filter="drop-shadow(0 0 10px rgba(56,189,248,0.4))"/>
+                <text y="-7" fill="#38bdf8" font-size="18" text-anchor="middle">👤</text>
+                <text y="13" fill="#f8fafc" font-size="10" font-weight="700" text-anchor="middle" font-family="system-ui">Patient</text>
+                <text y="58" fill="#38bdf8" font-size="12" font-weight="700" text-anchor="middle" font-family="system-ui">${chain.patient.name}</text>
+                <text y="74" fill="#94a3b8" font-size="9" font-family="monospace" text-anchor="middle">${pAddr ? pAddr.substring(0, 14) + '...' : ''}</text>
+              </g>
+
+              <!-- Node 2: Hospital -->
+              <g transform="translate(${hospitalPos.x}, ${hospitalPos.y})">
+                <circle r="44" fill="#111827" stroke="#f59e0b" stroke-width="3" filter="drop-shadow(0 0 10px rgba(245,158,11,0.4))"/>
+                <text y="-8" fill="#f59e0b" font-size="22" text-anchor="middle">🏥</text>
+                <text y="13" fill="#f8fafc" font-size="10" font-weight="700" text-anchor="middle" font-family="system-ui">Hospital</text>
+                <text y="62" fill="#f59e0b" font-size="12" font-weight="700" text-anchor="middle" font-family="system-ui">${chain.hospital.name}</text>
+                <text y="78" fill="#94a3b8" font-size="9" font-family="monospace" text-anchor="middle">${hAddr ? hAddr.substring(0, 14) + '...' : ''}</text>
+              </g>
+
+              <!-- Node 3: Doctor -->
+              <g transform="translate(${doctorPos.x}, ${doctorPos.y})">
+                <circle r="40" fill="#111827" stroke="#10b981" stroke-width="3" filter="drop-shadow(0 0 10px rgba(16,185,129,0.4))"/>
+                <text y="-7" fill="#10b981" font-size="18" text-anchor="middle">🩺</text>
+                <text y="13" fill="#f8fafc" font-size="10" font-weight="700" text-anchor="middle" font-family="system-ui">Doctor</text>
+                <text y="58" fill="#10b981" font-size="12" font-weight="700" text-anchor="middle" font-family="system-ui">${chain.doctor.name}</text>
+                <text y="74" fill="#94a3b8" font-size="9" font-family="monospace" text-anchor="middle">${dAddr ? dAddr.substring(0, 14) + '...' : ''}</text>
+              </g>
+            </g>
+          `;
+        }).join('')}
       </svg>
     `;
   }

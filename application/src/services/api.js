@@ -501,8 +501,30 @@ export class BlockchainApi {
   async getBirdsEyeView() {
     let chainHeight = (this.localLedger && this.localLedger.blocks) ? this.localLedger.blocks.length : 0;
     let nodeBlocks = [];
+    let syncData = null;
 
-    if (await this.checkConnection()) {
+    // 1. Fetch live ledger sync if server endpoint is available
+    try {
+      const syncRes = await fetch('/api/ledger/sync');
+      if (syncRes.ok) {
+        syncData = await syncRes.json();
+      }
+    } catch (e) {
+      console.warn('Ledger sync endpoint unavailable, using node REST fallback:', e);
+    }
+
+    if (syncData && Array.isArray(syncData.blocks) && syncData.blocks.length > 0) {
+      nodeBlocks = syncData.blocks.map(b => ({
+        index: b.block_index,
+        hash: b.block_hash,
+        prev_hash: b.prev_hash,
+        merkle_root: b.merkle_root,
+        timestamp: b.timestamp,
+        authority_name: b.authority_name,
+        tx_count: b.tx_count
+      }));
+      chainHeight = nodeBlocks.length;
+    } else if (await this.checkConnection()) {
       try {
         nodeBlocks = await this.getBlocks();
         if (Array.isArray(nodeBlocks) && nodeBlocks.length > 0) {
@@ -518,9 +540,10 @@ export class BlockchainApi {
     const links = [];
     const keysArr = [];
 
-    const transactions = (this.localLedger && this.localLedger.transactions) ? this.localLedger.transactions : [];
+    // Local in-memory transactions
+    const localTxs = (this.localLedger && this.localLedger.transactions) ? this.localLedger.transactions : [];
 
-    for (const tx of transactions) {
+    for (const tx of localTxs) {
       if (tx.type === 'TEMPORAL_KEY_GRANT' || tx.type === 'TEMPORAL_KEY_DELEGATE') {
         if (tx.sender) distinctAddresses.add(tx.sender);
         if (tx.recipient) distinctAddresses.add(tx.recipient);
@@ -558,6 +581,113 @@ export class BlockchainApi {
       }
     }
 
+    // 2. Incorporate live on-chain tokens from SQLite ledger
+    if (syncData && Array.isArray(syncData.tokens)) {
+      for (const t of syncData.tokens) {
+        const normTokenId = t.token_id;
+        if (keysArr.some(k => k.tx_id === normTokenId)) continue;
+
+        if (t.grantor_address) distinctAddresses.add(t.grantor_address);
+        if (t.recipient_address) distinctAddresses.add(t.recipient_address);
+
+        const isRevoked = t.status === 2 || (this.localLedger?.revokedKeys?.[normTokenId] ?? false);
+        const isExpired = t.valid_until > 0 && now > t.valid_until;
+        const isActive = t.status === 1 && !isRevoked && !isExpired;
+
+        keysArr.push({
+          tx_id: normTokenId,
+          type: (t.parent_token_id && t.parent_token_id !== '0x0000000000000000000000000000000000000000000000000000000000000000')
+            ? 'TEMPORAL_KEY_DELEGATE'
+            : 'TEMPORAL_KEY_GRANT',
+          sender: t.grantor_address,
+          recipient: t.recipient_address,
+          record_hash: t.target_blob_id,
+          parent_tx_id: t.parent_token_id || '',
+          valid_from: t.valid_from,
+          valid_until: t.valid_until,
+          is_active: isActive,
+          is_expired: isExpired,
+          is_revoked: isRevoked,
+          time_remaining_seconds: Math.max(0, t.valid_until - now)
+        });
+
+        links.push({
+          from: t.grantor_address,
+          to: t.recipient_address,
+          key_id: normTokenId,
+          record_hash: t.target_blob_id,
+          parent_tx_id: t.parent_token_id,
+          is_active: isActive,
+          type: 'TEMPORAL_KEY_GRANT'
+        });
+      }
+    }
+
+    // 3. Assemble visual Patient -> Hospital -> Doctor entity chains
+    const chains = [
+      {
+        patient: {
+          name: DEMO_ACCOUNTS.patient.name,
+          role: 'Patient',
+          address: DEMO_ACCOUNTS.patient.address,
+          label: 'Patient Alice (Owner)'
+        },
+        hospital: {
+          name: DEMO_ACCOUNTS.hospital.name,
+          role: 'Hospital',
+          address: DEMO_ACCOUNTS.hospital.address,
+          label: 'Apollo Hospital (Facility)'
+        },
+        doctor: {
+          name: DEMO_ACCOUNTS.doctor_rajesh.name,
+          role: 'Doctor',
+          address: DEMO_ACCOUNTS.doctor_rajesh.address,
+          label: 'Dr. Rajesh Sharma (Specialist)'
+        },
+        grantActive: true,
+        delActive: true,
+        grantLabel: '⏱️ Master Grant (24h Limit)',
+        delLabel: '➡️ Sub-Delegated (12h Limit)'
+      }
+    ];
+
+    if (syncData && Array.isArray(syncData.entities)) {
+      for (const ent of syncData.entities) {
+        if (ent.patient?.address) distinctAddresses.add(ent.patient.address);
+        if (ent.hospital?.address) distinctAddresses.add(ent.hospital.address);
+        if (ent.doctor?.address) distinctAddresses.add(ent.doctor.address);
+
+        chains.push({
+          patient: {
+            name: ent.patient?.name || 'Patient',
+            role: 'Patient',
+            address: ent.patient?.address || '',
+            label: `${ent.patient?.name || 'Patient'} (Owner)`
+          },
+          hospital: {
+            name: ent.hospital?.name || 'Hospital',
+            role: 'Hospital',
+            address: ent.hospital?.address || '',
+            label: `${ent.hospital?.name || 'Hospital'} (Facility)`
+          },
+          doctor: {
+            name: ent.doctor?.name || 'Doctor',
+            role: 'Doctor',
+            address: ent.doctor?.address || '',
+            label: `${ent.doctor?.name || 'Doctor'} (${ent.doctor?.specialty || 'Specialist'})`
+          },
+          grantActive: true,
+          delActive: true,
+          grantLabel: `⏱️ Access Grant (${ent.token?.duration_hours || 24}h Limit)`,
+          delLabel: '🔓 Decryption Audited On-Chain'
+        });
+      }
+    }
+
+    const totalTxCount = (nodeBlocks && nodeBlocks.length > 0)
+      ? nodeBlocks.reduce((acc, b) => acc + (b.tx_count || 0), 0)
+      : localTxs.length;
+
     const displayBlocks = (nodeBlocks && nodeBlocks.length > 0)
       ? nodeBlocks
       : (this.localLedger?.blocks || []).map(b => ({
@@ -571,7 +701,7 @@ export class BlockchainApi {
 
     return {
       chain_height: chainHeight,
-      total_transactions: transactions.length,
+      total_transactions: totalTxCount,
       mempool_size: 0,
       current_time: now,
       authorities: [
@@ -581,7 +711,8 @@ export class BlockchainApi {
       temporal_keys: keysArr,
       lineage_graph: {
         nodes: Array.from(distinctAddresses).map(addr => ({ address: addr })),
-        links
+        links,
+        chains
       }
     };
   }
