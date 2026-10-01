@@ -36,6 +36,10 @@ target_link_libraries(sanjeev_core
 add_executable(sanjeev_node src/main.cpp)
 target_link_libraries(sanjeev_node PRIVATE sanjeev_core)
 
+# CLI Lineage & Transaction Trace Tool
+add_executable(sanjeev_trace src/trace_tool.cpp)
+target_link_libraries(sanjeev_trace PRIVATE sanjeev_core)
+
 # Tests
 enable_testing()
 
@@ -50,3 +54,7 @@ add_test(NAME StorageTests COMMAND test_storage)
 add_executable(test_blockchain tests/test_blockchain.cpp)
 target_link_libraries(test_blockchain PRIVATE sanjeev_core)
 add_test(NAME BlockchainTests COMMAND test_blockchain)
+
+add_executable(test_document_encryption tests/test_document_encryption.cpp)
+target_link_libraries(test_document_encryption PRIVATE sanjeev_core)
+add_test(NAME DocumentEncryptionTests COMMAND test_document_encryption)

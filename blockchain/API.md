@@ -159,5 +159,84 @@ Records on-chain that an address requested/accessed decryption of a blob under a
 ### 4. Ledger & Lineage Queries
 
 * `GET /chain/status` - Node sync state, current block height, authority list.
-* `GET /chain/blocks?limit=10&offset=0` - Query historical blocks.
+* `GET /chain/blocks` - Query historical blocks, transaction IDs, types, and authority seals.
+* `GET /blob/:blob_id` - Fetch encrypted blob details, IV, tag, and previous version ID.
 * `GET /lineage/:id` - Full provenance tree connecting Patient $\rightarrow$ Blob $\rightarrow$ Token $\rightarrow$ Hospital $\rightarrow$ Doctor $\rightarrow$ Decryption Audits.
+
+---
+
+## 🔍 How to View and Trace Transactions
+
+Sanjeev provides two complementary interfaces for auditing and tracing transactions: the **HTTP REST Endpoints** and the native **CLI Trace Tool (`sanjeev_trace`)**.
+
+### 1. Using the CLI Trace Tool (`sanjeev_trace`)
+
+The `sanjeev_trace` binary allows administrators, auditors, and patients to directly query the local or node SQLite ledger without external dependencies.
+
+#### A. View Full Ledger Chain & Transaction Overview
+```bash
+./build/sanjeev_trace --chain --db sanjeev_node.db
+```
+**Sample Output:**
+```text
+===============================================================
+   Sanjeev (संजीव) - Blockchain Transaction & Lineage Tracer   
+===============================================================
+
+[Ledger Summary]
+  Total Blocks: 2
+---------------------------------------------------------------
+Block #  0 | Hash: 0xeeb374a5b9a1c2... | TxCount:  0 | Authority: Ministry of Health | Time: 1790837750
+Block #  1 | Hash: 0xb1243c9d4c320e... | TxCount:  2 | Authority: Ministry of Health | Time: 1790837750
+   └─ [Tx BLOB_STORE]  ID: 0x039d9ec037b969... Sender: 0x65c5d8f342...
+   └─ [Tx TOKEN_GRANT] ID: 0xb187f14500b316... Sender: 0x65c5d8f342...
+---------------------------------------------------------------
+```
+
+#### B. Trace Document Revision Provenance & Access Audit Receipts
+Inspects a specific encrypted medical record to display its complete version history and every time an authorized party requested decryption:
+```bash
+./build/sanjeev_trace --blob 0x039d9ec037b96942... --db sanjeev_node.db
+```
+**Sample Output:**
+```text
+[Target Encrypted Blob Details]
+  Blob ID        : 0x039d9ec037b96942...
+  Previous Version: None (Genesis Version)
+  Owner Address  : 0x65c5d8f342b30b42fcf023d6...
+  Updater Address: 0x65c5d8f342b30b42fcf023d6...
+  Ciphertext Size: 1048 bytes
+  IV (Hex)       : a1b2c3d4e5f60718293a4b5c
+  Auth Tag (Hex) : 9f8e7d6c5b4a39281726354455667788
+  Timestamp      : 1790837750
+
+--- Version Provenance Chain (1 revisions) ---
+  v1: 0x039d9ec037b96942... (Updated by: 0x65c5d8f342... at t=1790837750)
+
+--- On-Chain Decryption Audit Receipts (1 access events) ---
+  [ACCESS EVENT] Accessor: 0x47e19f2a08... | Token: 0xb187f14500b316... | Time: 1790838100
+```
+
+#### C. Trace Temporal Access Token Status & Delegation
+Inspects the cryptographic validity window and delegation parent for a token:
+```bash
+./build/sanjeev_trace --token 0xb187f14500b31671... --db sanjeev_node.db
+```
+
+#### D. Inspect Specific Transaction Payload
+```bash
+./build/sanjeev_trace --tx 0x039d9ec037b96942... --db sanjeev_node.db
+```
+
+---
+
+## 📦 Multi-File Document Encryption Pattern (ZIP Archive)
+
+In healthcare workflows, patient records rarely consist of a single text file; they contain clinical summaries and diagnostic imaging (e.g. DICOM/PNG scans). Sanjeev handles this through encrypted container archives:
+
+1. **Client Bundling**: The client application packages multiple files (e.g. `medical_scan.png` and `clinical_report.txt`) into a single uncompressed ZIP archive byte stream.
+2. **AES-256-GCM Encryption**: The client generates a random 256-bit symmetric key and encrypts the entire ZIP archive.
+3. **On-Chain Commitment**: The resulting ciphertext, IV, tag, and SHA-256 hash are committed via `BLOB_STORE`. The blockchain never inspects the inner contents.
+4. **Temporal Delegation**: The patient issues a `TOKEN_GRANT` wrapping the symmetric key for the recipient doctor or hospital, bounded by `valid_from` and `valid_until`.
+5. **Decryption & Unpacking**: When the doctor requests decryption within the valid window, an audit event is logged on-chain, the symmetric key is released, and the client decrypts and extracts both the scan and report byte-for-byte.
+
