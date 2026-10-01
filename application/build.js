@@ -124,6 +124,9 @@ function test() {
     'src/services/crypto.js',
     'src/services/state.js',
     'src/services/openrouter.js',
+    'src/services/auth.js',
+    'src/components/AuthModal.js',
+    'src/styles/auth.css',
     'src/views/patient.js',
     'src/views/hospital.js',
     'src/views/explorer.js'
