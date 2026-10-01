@@ -62,3 +62,7 @@ add_test(NAME DocumentEncryptionTests COMMAND test_document_encryption)
 add_executable(test_document_update tests/test_document_update.cpp)
 target_link_libraries(test_document_update PRIVATE sanjeev_core)
 add_test(NAME DocumentUpdateTests COMMAND test_document_update)
+
+add_executable(test_edge_cases tests/test_edge_cases.cpp)
+target_link_libraries(test_edge_cases PRIVATE sanjeev_core)
+add_test(NAME EdgeCaseTests COMMAND test_edge_cases)
